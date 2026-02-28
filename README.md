@@ -347,3 +347,11 @@ Per altre regioni aggiornare `DEYE_BASE_URL` nel config o passare `--base-url`.
 - [Deye Cloud Developer Portal](https://developer.deyecloud.com)
 - [Deye OpenAPI Swagger (EU1)](https://eu1-developer.deyecloud.com/v2/api-docs)
 - [Sample code ufficiale (GitHub)](https://github.com/DeyeCloudDevelopers/deye-openapi-client-sample-code)
+
+---
+
+## Supporta il progetto
+
+Se questo strumento ti è utile, offrimi un caffè ☕
+
+[![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-numbor-yellow?logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/numbor)
