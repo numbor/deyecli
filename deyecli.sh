@@ -117,6 +117,11 @@ Commands:
   token           Obtain an access token          (POST /v1.0/account/token)
   config-battery  Read battery config parameters  (POST /v1.0/config/battery)
                   Usage: config-battery [--device-sn <sn>] [<sn>]
+  config-system              Read system work mode parameters  (POST /v1.0/config/system)
+                             Usage: config-system [--device-sn <sn>] [<sn>]
+  battery-parameter-update   Set a battery parameter value     (POST /v1.0/order/battery/parameter/update)
+                             Usage: battery-parameter-update --param-type <TYPE> --value <n> [--device-sn <sn>] [<sn>]
+                             param-type: MAX_CHARGE_CURRENT | MAX_DISCHARGE_CURRENT | GRID_CHARGE_AMPERE | BATT_LOW
 
 Global options (can also be set in $CONFIG_FILE or as env vars):
   --base-url <url>        API base URL  (DEYE_BASE_URL)
@@ -304,6 +309,117 @@ cmd_config_battery() {
 }
 
 # ---------------------------------------------------------------------------
+# Command: config-system  →  POST /v1.0/config/system
+# ---------------------------------------------------------------------------
+cmd_config_system() {
+    local device_sn="${DEYE_DEVICE_SN:-}"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --device-sn) device_sn="$2"; shift 2 ;;
+            --*)         parse_global_args "$1" "$2"; shift 2 ;;
+            -h|--help)   usage; exit 0 ;;
+            *)           [[ -z "$device_sn" ]] && device_sn="$1"; shift ;;
+        esac
+    done
+
+    local missing=()
+    [[ -z "$DEYE_TOKEN" ]]  && missing+=("DEYE_TOKEN / --token")
+    [[ -z "$device_sn" ]]   && missing+=("device serial number  (DEYE_DEVICE_SN / --device-sn / positional arg)")
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        err "Missing required parameter(s):"
+        for m in "${missing[@]}"; do err "  - $m"; done
+        exit 1
+    fi
+
+    require curl
+
+    local body="{ \"deviceSn\": \"${device_sn}\" }"
+    if command -v jq &>/dev/null; then
+        body="$(jq -n --arg deviceSn "$device_sn" '{ deviceSn: $deviceSn }')"
+    fi
+
+    local url="${DEYE_BASE_URL}/v1.0/config/system"
+
+    echo "→ POST ${url}" >&2
+
+    curl --silent --show-error \
+        --request POST \
+        --url "$url" \
+        --header "Content-Type: application/json" \
+        --header "Accept: application/json" \
+        --header "authorization: Bearer $(bear_token "${DEYE_TOKEN}")" \
+        --data "$body" \
+    | json_output
+}
+
+# ---------------------------------------------------------------------------
+# Command: battery-parameter-update  →  POST /v1.0/order/battery/parameter/update
+# ---------------------------------------------------------------------------
+cmd_battery_parameter_update() {
+    local device_sn="${DEYE_DEVICE_SN:-}"
+    local param_type=""
+    local value=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --device-sn)  device_sn="$2";  shift 2 ;;
+            --param-type) param_type="$2"; shift 2 ;;
+            --value)      value="$2";      shift 2 ;;
+            --*)          parse_global_args "$1" "$2"; shift 2 ;;
+            -h|--help)    usage; exit 0 ;;
+            *)            [[ -z "$device_sn" ]] && device_sn="$1"; shift ;;
+        esac
+    done
+
+    # Validate enum value
+    local valid_types="MAX_CHARGE_CURRENT MAX_DISCHARGE_CURRENT GRID_CHARGE_AMPERE BATT_LOW"
+    if [[ -n "$param_type" ]] && ! echo " $valid_types " | grep -qw "$param_type"; then
+        err "Invalid --param-type '$param_type'. Valid values: $valid_types"
+        exit 1
+    fi
+
+    local missing=()
+    [[ -z "$DEYE_TOKEN" ]]  && missing+=("DEYE_TOKEN / --token")
+    [[ -z "$device_sn" ]]   && missing+=("device serial number  (DEYE_DEVICE_SN / --device-sn / positional arg)")
+    [[ -z "$param_type" ]]  && missing+=("--param-type <TYPE>  (MAX_CHARGE_CURRENT | MAX_DISCHARGE_CURRENT | GRID_CHARGE_AMPERE | BATT_LOW)")
+    [[ -z "$value" ]]       && missing+=("--value <integer>")
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        err "Missing required parameter(s):"
+        for m in "${missing[@]}"; do err "  - $m"; done
+        exit 1
+    fi
+
+    require curl
+
+    local body
+    if command -v jq &>/dev/null; then
+        # Note: Deye API uses 'paramterType' (typo in the API — single 'e')
+        body="$(jq -n \
+            --arg deviceSn   "$device_sn" \
+            --arg paramType  "$param_type" \
+            --argjson value  "$value" \
+            '{ deviceSn: $deviceSn, paramterType: $paramType, value: $value }'
+        )"
+    else
+        body="{ \"deviceSn\": \"${device_sn}\", \"paramterType\": \"${param_type}\", \"value\": ${value} }"
+    fi
+
+    local url="${DEYE_BASE_URL}/v1.0/order/battery/parameter/update"
+
+    echo "→ POST ${url}" >&2
+
+    curl --silent --show-error \
+        --request POST \
+        --url "$url" \
+        --header "Content-Type: application/json" \
+        --header "Accept: application/json" \
+        --header "authorization: Bearer $(bear_token "${DEYE_TOKEN}")" \
+        --data "$body" \
+    | json_output
+}
+
+# ---------------------------------------------------------------------------
 # Main dispatcher
 # ---------------------------------------------------------------------------
 main() {
@@ -324,8 +440,10 @@ main() {
 
     case "$command" in
         token)          cmd_token "$@" ;;
-        config-battery) cmd_config_battery "$@" ;;
-        -h|--help|help) usage; exit 0 ;;
+        config-battery)            cmd_config_battery "$@" ;;
+        config-system)             cmd_config_system "$@" ;;
+        battery-parameter-update)  cmd_battery_parameter_update "$@" ;;
+        -h|--help|help)            usage; exit 0 ;;
         *)
             err "Unknown command: '$command'"
             usage

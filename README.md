@@ -182,6 +182,116 @@ Il seriale del dispositivo può essere fornito in tre modi equivalenti:
 
 ---
 
+### `config-system` — Parametri modalità di lavoro del sistema
+
+`POST /v1.0/config/system`
+
+Legge la modalità di lavoro corrente del sistema, il pattern di gestione energia e i limiti di potenza configurati per un dispositivo.
+
+```bash
+# Argomento posizionale
+./deyecli.sh config-system 2401110313
+
+# Flag esplicito
+./deyecli.sh config-system --device-sn 2401110313
+
+# Dal config file (DEYE_DEVICE_SN)
+./deyecli.sh config-system
+```
+
+**Parametri obbligatori:**
+
+| Variabile | Flag | Descrizione |
+|-----------|------|-------------|
+| `DEYE_TOKEN` | `--token` | Token di accesso |
+| `DEYE_DEVICE_SN` | `--device-sn` o arg posizionale | Seriale del dispositivo |
+
+**Esempio di risposta:**
+
+```json
+{
+  "code": "1000000",
+  "success": true,
+  "systemWorkMode": "SELLING_FIRST",
+  "energyPattern": "BATTERY_FIRST",
+  "maxSellPower": 6000,
+  "maxSolarPower": 8000,
+  "zeroExportPower": 0
+}
+```
+
+**Valori possibili di `systemWorkMode`:**
+
+| Valore | Descrizione |
+|--------|-------------|
+| `SELLING_FIRST` | Vende l'energia in eccesso alla rete |
+| `ZERO_EXPORT_TO_LOAD` | Nessuna esportazione, copre solo i carichi |
+| `ZERO_EXPORT_TO_CT` | Zero export misurato tramite CT (bobina di corrente) |
+
+---
+
+### `battery-parameter-update` — Imposta un parametro della batteria
+
+`POST /v1.0/order/battery/parameter/update`
+
+Invia un comando di controllo per impostare il valore di un singolo parametro della batteria. La chiamata ritorna un `orderId` che rappresenta il comando accodato; il dispositivo lo esegue non appena è online.
+
+```bash
+# Imposta la corrente massima di carica a 50 A
+./deyecli.sh battery-parameter-update \
+    --param-type MAX_CHARGE_CURRENT \
+    --value 50
+
+# Con device SN esplicito
+./deyecli.sh battery-parameter-update \
+    --device-sn 2401110313 \
+    --param-type MAX_DISCHARGE_CURRENT \
+    --value 40
+
+# Device SN come argomento posizionale
+./deyecli.sh battery-parameter-update 2401110313 \
+    --param-type BATT_LOW \
+    --value 15
+```
+
+**Parametri obbligatori:**
+
+| Variabile | Flag | Descrizione |
+|-----------|------|-------------|
+| `DEYE_TOKEN` | `--token` | Token di accesso |
+| `DEYE_DEVICE_SN` | `--device-sn` o arg posizionale | Seriale del dispositivo |
+| — | `--param-type <TYPE>` | Tipo di parametro (vedi tabella sotto) |
+| — | `--value <intero>` | Valore da impostare |
+
+**Tipi di parametro (`--param-type`):**
+
+| Valore | Descrizione |
+|--------|-------------|
+| `MAX_CHARGE_CURRENT` | Corrente massima di carica (A) |
+| `MAX_DISCHARGE_CURRENT` | Corrente massima di scarica (A) |
+| `GRID_CHARGE_AMPERE` | Corrente di carica dalla rete (A) |
+| `BATT_LOW` | Soglia batteria scarica / SoC minimo (%) |
+
+> **Nota API:** la chiave JSON è `paramterType` (typo nella API Deye, manca la seconda `e`). Lo script gestisce questo automaticamente.
+
+**Esempio di risposta:**
+
+```json
+{
+  "code": "1000000",
+  "success": true,
+  "orderId": 987654,
+  "connectionStatus": 1,
+  "collectionTime": 1711093038,
+  "requestId": "abc123"
+}
+```
+
+`connectionStatus`: `0` = Offline, `1` = Online  
+Un `orderId` diverso da `null` conferma che il comando è stato accodato. Quando il dispositivo è online lo esegue e aggiorna i parametri.
+
+---
+
 ## Flusso tipico
 
 ```bash
