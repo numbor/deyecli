@@ -1,0 +1,51 @@
+# deyecli configuration file
+# Location: ~/.config/deyecli/config  (or set DEYE_CONFIG=/path/to/config)
+#
+# Lines starting with # are comments and are ignored.
+# All values can also be provided as environment variables with the same name.
+# Command-line flags (e.g. --app-id) always take precedence over this file.
+
+# ---------------------------------------------------------------------------
+# API base URL — change region prefix if not using EU1
+# Available regions: eu1  (eu1-developer.deyecloud.com)
+# ---------------------------------------------------------------------------
+DEYE_BASE_URL=https://eu1-developer.deyecloud.com
+
+# ---------------------------------------------------------------------------
+# Application credentials  (required for every call)
+# Obtain them from https://developer.deyecloud.com
+# ---------------------------------------------------------------------------
+DEYE_APP_ID=
+DEYE_APP_SECRET=
+
+# ---------------------------------------------------------------------------
+# Login credentials  (for the /token command)
+# Provide ONE of: username, email, or mobile.
+# If using mobile, DEYE_COUNTRY_CODE must also be set.
+# ---------------------------------------------------------------------------
+DEYE_USERNAME=
+DEYE_EMAIL=
+DEYE_MOBILE=
+DEYE_COUNTRY_CODE=
+
+# Password in PLAINTEXT — the script will SHA-256 hash it before sending it.
+DEYE_PASSWORD=
+
+# ---------------------------------------------------------------------------
+# Optional: company ID for business-account tokens.
+# Leave empty for a personal-account token.
+# Obtain it via POST /v1.0/account/info once you have a personal token.
+# ---------------------------------------------------------------------------
+DEYE_COMPANY_ID=
+
+# ---------------------------------------------------------------------------
+# Token  (output of the 'token' command — accessToken field, without "Bearer ")
+# Can be set here to avoid passing --token on every call.
+# ---------------------------------------------------------------------------
+DEYE_TOKEN=
+
+# ---------------------------------------------------------------------------
+# Default device serial number used by device/config commands.
+# Can be overridden per-call with --device-sn <sn> or a positional argument.
+# ---------------------------------------------------------------------------
+DEYE_DEVICE_SN=
