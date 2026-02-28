@@ -20,6 +20,7 @@ DEYE_PASSWORD="${DEYE_PASSWORD:-}"      # plaintext; script will SHA256-hash it
 DEYE_COMPANY_ID="${DEYE_COMPANY_ID:-}"
 DEYE_TOKEN="${DEYE_TOKEN:-}"            # Bearer token from /token endpoint
 DEYE_DEVICE_SN="${DEYE_DEVICE_SN:-}"   # Device serial number
+DEYE_STATION_ID="${DEYE_STATION_ID:-}"  # Station ID (integer)
 
 # Config file location (XDG-compliant)
 CONFIG_FILE="${DEYE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/deyecli/config}"
@@ -122,6 +123,13 @@ Commands:
   battery-parameter-update   Set a battery parameter value     (POST /v1.0/order/battery/parameter/update)
                              Usage: battery-parameter-update --param-type <TYPE> --value <n> [--device-sn <sn>] [<sn>]
                              param-type: MAX_CHARGE_CURRENT | MAX_DISCHARGE_CURRENT | GRID_CHARGE_AMPERE | BATT_LOW
+  station-list               Fetch station list under the account     (POST /v1.0/station/list)
+                             Returns stationId, name, batterySOC, generationPower, etc.
+  station-latest             Fetch latest real-time data of a station (POST /v1.0/station/latest)
+                             Includes batteryPower (W), batterySOC, generationPower, gridPower, etc.
+                             Usage: station-latest [--station-id <id>] [<id>]
+  device-latest              Fetch latest raw measure-point data of a device (POST /v1.0/device/latest)
+                             Usage: device-latest [--device-sn <sn>] [<sn>]
 
 Global options (can also be set in $CONFIG_FILE or as env vars):
   --base-url <url>        API base URL  (DEYE_BASE_URL)
@@ -135,6 +143,7 @@ Global options (can also be set in $CONFIG_FILE or as env vars):
   --company-id <id>       Company ID for business token (DEYE_COMPANY_ID)
   --token <bearer>        Access token from /token endpoint (DEYE_TOKEN)
   --device-sn <sn>        Device serial number (DEYE_DEVICE_SN)
+  --station-id <id>       Station ID integer (DEYE_STATION_ID)
   -h, --help              Show this help
 
 Examples:
@@ -165,7 +174,10 @@ parse_global_args() {
             --mobile)       DEYE_MOBILE="$2";       shift 2 ;;
             --country-code) DEYE_COUNTRY_CODE="$2"; shift 2 ;;
             --password)     DEYE_PASSWORD="$2";     shift 2 ;;
-            --company-id)   DEYE_COMPANY_ID="$2";   shift 2 ;;            --token)        DEYE_TOKEN="$2";       shift 2 ;;            -h|--help)      usage; exit 0 ;;
+            --company-id)   DEYE_COMPANY_ID="$2";   shift 2 ;;            --token)        DEYE_TOKEN="$2";       shift 2 ;;
+            --device-sn)    DEYE_DEVICE_SN="$2";   shift 2 ;;
+            --station-id)   DEYE_STATION_ID="$2";  shift 2 ;;
+            -h|--help)      usage; exit 0 ;;
             -*)             err "Unknown option: $1"; usage; exit 1 ;;
             *)              break ;;
         esac
@@ -420,6 +432,133 @@ cmd_battery_parameter_update() {
 }
 
 # ---------------------------------------------------------------------------
+# Command: station-list  →  POST /v1.0/station/list
+# ---------------------------------------------------------------------------
+cmd_station_list() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --*)       parse_global_args "$1" "$2"; shift 2 ;;
+            -h|--help) usage; exit 0 ;;
+            *)         shift ;;
+        esac
+    done
+
+    local missing=()
+    [[ -z "$DEYE_TOKEN" ]] && missing+=("DEYE_TOKEN / --token")
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        err "Missing required parameter(s):"
+        for m in "${missing[@]}"; do err "  - $m"; done
+        exit 1
+    fi
+
+    require curl
+
+    local url="${DEYE_BASE_URL}/v1.0/station/list"
+
+    echo "→ POST ${url}" >&2
+
+    curl --silent --show-error \
+        --request POST \
+        --url "$url" \
+        --header "Content-Type: application/json" \
+        --header "Accept: application/json" \
+        --header "authorization: Bearer $(bear_token "${DEYE_TOKEN}")" \
+        --data '{}' \
+    | json_output
+}
+
+# ---------------------------------------------------------------------------
+# Command: station-latest  →  POST /v1.0/station/latest
+# ---------------------------------------------------------------------------
+cmd_station_latest() {
+    local station_id="${DEYE_STATION_ID:-}"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --station-id) station_id="$2"; shift 2 ;;
+            --*)          parse_global_args "$1" "$2"; shift 2 ;;
+            -h|--help)    usage; exit 0 ;;
+            *)            [[ -z "$station_id" ]] && station_id="$1"; shift ;;
+        esac
+    done
+
+    local missing=()
+    [[ -z "$DEYE_TOKEN" ]]   && missing+=("DEYE_TOKEN / --token")
+    [[ -z "$station_id" ]]   && missing+=("station ID  (DEYE_STATION_ID / --station-id / positional arg)")
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        err "Missing required parameter(s):"
+        for m in "${missing[@]}"; do err "  - $m"; done
+        exit 1
+    fi
+
+    require curl
+
+    local body="{ \"stationId\": ${station_id} }"
+    if command -v jq &>/dev/null; then
+        body="$(jq -n --argjson stationId "$station_id" '{ stationId: $stationId }')"
+    fi
+
+    local url="${DEYE_BASE_URL}/v1.0/station/latest"
+
+    echo "→ POST ${url}" >&2
+
+    curl --silent --show-error \
+        --request POST \
+        --url "$url" \
+        --header "Content-Type: application/json" \
+        --header "Accept: application/json" \
+        --header "authorization: Bearer $(bear_token "${DEYE_TOKEN}")" \
+        --data "$body" \
+    | json_output
+}
+
+# ---------------------------------------------------------------------------
+# Command: device-latest  →  POST /v1.0/device/latest
+# ---------------------------------------------------------------------------
+cmd_device_latest() {
+    local device_sn="${DEYE_DEVICE_SN:-}"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --device-sn) device_sn="$2"; shift 2 ;;
+            --*)         parse_global_args "$1" "$2"; shift 2 ;;
+            -h|--help)   usage; exit 0 ;;
+            *)           [[ -z "$device_sn" ]] && device_sn="$1"; shift ;;
+        esac
+    done
+
+    local missing=()
+    [[ -z "$DEYE_TOKEN" ]]  && missing+=("DEYE_TOKEN / --token")
+    [[ -z "$device_sn" ]]   && missing+=("device serial number  (DEYE_DEVICE_SN / --device-sn / positional arg)")
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        err "Missing required parameter(s):"
+        for m in "${missing[@]}"; do err "  - $m"; done
+        exit 1
+    fi
+
+    require curl
+
+    local body="{ \"deviceList\": [\"${device_sn}\"] }"
+    if command -v jq &>/dev/null; then
+        body="$(jq -n --arg deviceSn "$device_sn" '{ deviceList: [$deviceSn] }')"
+    fi
+
+    local url="${DEYE_BASE_URL}/v1.0/device/latest"
+
+    echo "→ POST ${url}" >&2
+
+    curl --silent --show-error \
+        --request POST \
+        --url "$url" \
+        --header "Content-Type: application/json" \
+        --header "Accept: application/json" \
+        --header "authorization: Bearer $(bear_token "${DEYE_TOKEN}")" \
+        --data "$body" \
+    | json_output
+}
+
+# ---------------------------------------------------------------------------
 # Main dispatcher
 # ---------------------------------------------------------------------------
 main() {
@@ -443,6 +582,9 @@ main() {
         config-battery)            cmd_config_battery "$@" ;;
         config-system)             cmd_config_system "$@" ;;
         battery-parameter-update)  cmd_battery_parameter_update "$@" ;;
+        station-list)              cmd_station_list "$@" ;;
+        station-latest)            cmd_station_latest "$@" ;;
+        device-latest)             cmd_device_latest "$@" ;;
         -h|--help|help)            usage; exit 0 ;;
         *)
             err "Unknown command: '$command'"
