@@ -63,6 +63,49 @@ bear_token() {
     printf '%s' "$t"
 }
 
+# Validate battery parameter value: check numeric type and range
+# Returns 0 if valid, 1 if invalid (prints error to stderr)
+validate_battery_param() {
+    local param_type="$1"
+    local value="$2"
+    
+    # Check if value is an integer
+    if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+        err "Parameter value must be a positive integer, got: '$value'"
+        return 1
+    fi
+    
+    # Check range based on parameter type
+    case "$param_type" in
+        MAX_CHARGE_CURRENT)
+            if (( value > 200 )); then
+                err "MAX_CHARGE_CURRENT must be ≤ 200, got: $value"
+                return 1
+            fi
+            ;;
+        MAX_DISCHARGE_CURRENT)
+            if (( value > 200 )); then
+                err "MAX_DISCHARGE_CURRENT must be ≤ 200, got: $value"
+                return 1
+            fi
+            ;;
+        GRID_CHARGE_AMPERE)
+            if (( value > 100 )); then
+                err "GRID_CHARGE_AMPERE must be ≤ 100, got: $value"
+                return 1
+            fi
+            ;;
+        BATT_LOW)
+            if (( value > 100 )); then
+                err "BATT_LOW must be ≤ 100 (%), got: $value"
+                return 1
+            fi
+            ;;
+    esac
+    
+    return 0
+}
+
 # Write or update a KEY=VALUE line in the config file (safe with any chars)
 config_set() {
     local key="$1" value="$2"
@@ -122,7 +165,11 @@ Commands:
                              Usage: config-system [--device-sn <sn>] [<sn>]
   battery-parameter-update   Set a battery parameter value     (POST /v1.0/order/battery/parameter/update)
                              Usage: battery-parameter-update --param-type <TYPE> --value <n> [--device-sn <sn>] [<sn>]
-                             param-type: MAX_CHARGE_CURRENT | MAX_DISCHARGE_CURRENT | GRID_CHARGE_AMPERE | BATT_LOW
+                             param-type and valid ranges:
+                               MAX_CHARGE_CURRENT:     0-200 (A)
+                               MAX_DISCHARGE_CURRENT:  0-200 (A)
+                               GRID_CHARGE_AMPERE:     0-100 (A)
+                               BATT_LOW:               0-100 (%)
   station-list               Fetch station list under the account     (POST /v1.0/station/list)
                              Returns stationId, name, batterySOC, generationPower, etc.
   station-latest             Fetch latest real-time data of a station (POST /v1.0/station/latest)
@@ -399,6 +446,11 @@ cmd_battery_parameter_update() {
     if [[ ${#missing[@]} -gt 0 ]]; then
         err "Missing required parameter(s):"
         for m in "${missing[@]}"; do err "  - $m"; done
+        exit 1
+    fi
+
+    # Validate parameter value (numeric + range check)
+    if ! validate_battery_param "$param_type" "$value"; then
         exit 1
     fi
 

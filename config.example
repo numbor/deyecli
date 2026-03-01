@@ -49,3 +49,11 @@ DEYE_TOKEN=
 # Can be overridden per-call with --device-sn <sn> or a positional argument.
 # ---------------------------------------------------------------------------
 DEYE_DEVICE_SN=
+
+# ---------------------------------------------------------------------------
+# Station ID (integer) used by station-latest / station-history commands.
+# Obtain it by running:  deyecli.sh station-list
+# Look for the "id" field in the returned stationList array.
+# Can be overridden per-call with --station-id <id> or a positional argument.
+# ---------------------------------------------------------------------------
+DEYE_STATION_ID=
