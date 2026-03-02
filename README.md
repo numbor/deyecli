@@ -1,25 +1,25 @@
 # deyecli
-Bash CLI per le API REST di [Deye Cloud](https://developer.deyecloud.com/api), pensato per controllare e monitorare inverter fotovoltaici Deye direttamente da terminale.
+Bash CLI for [Deye Cloud](https://developer.deyecloud.com/api) REST APIs, designed to control and monitor Deye photovoltaic inverters directly from the terminal.
 
 ---
 
 > **⚠️ DISCLAIMER**  
-> Questo software è fornito "così com'è", senza garanzie di alcun tipo, esplicite o implicite.  
-> L'autore non è responsabile per eventuali danni, malfunzionamenti, perdite di dati o problemi derivanti dall'uso di questa utility.  
-> Utilizzare a proprio rischio e responsabilità. Si consiglia di testare accuratamente i comandi prima di applicarli in ambienti di produzione.
+> This software is provided "as is", without warranty of any kind, express or implied.  
+> The author is not responsible for any damages, malfunctions, data loss, or issues arising from the use of this utility.  
+> Use at your own risk and responsibility. It is recommended to thoroughly test commands before applying them in production environments.
 
 ---
 
-## Requisiti
+## Requirements
 
-| Tool | Note |
-|------|------|
-| `bash` ≥ 4.0 | disponibile su qualsiasi Linux moderno |
-| `curl` | per le chiamate HTTP |
-| `jq` | parsing/formattazione JSON — opzionale ma raccomandato |
-| `sha256sum` | hashing della password — incluso in `coreutils` |
+| Tool | Notes |
+|------|-------|
+| `bash` ≥ 4.0 | available on any modern Linux |
+| `curl` | for HTTP calls |
+| `jq` | JSON parsing/formatting — optional but recommended |
+| `sha256sum` | password hashing — included in `coreutils` |
 
-## Installazione
+## Installation
 
 ```bash
 git clone <repo-url> deyecli
@@ -27,7 +27,7 @@ cd deyecli
 chmod +x deyecli.sh
 ```
 
-Opzionalmente, aggiungere un symlink al `PATH`:
+Optionally, add a symlink to your `PATH`:
 
 ```bash
 ln -s "$PWD/deyecli.sh" ~/.local/bin/deyecli
@@ -35,18 +35,18 @@ ln -s "$PWD/deyecli.sh" ~/.local/bin/deyecli
 
 ---
 
-## Configurazione
+## Configuration
 
-Lo script legge i parametri da più sorgenti, in ordine di precedenza decrescente:
+The script reads parameters from multiple sources, in descending order of precedence:
 
 ```
-flag CLI  >  variabile d'ambiente  >  file di config
+CLI flag  >  environment variable  >  config file
 ```
 
-### File di config
+### Config file
 
-Posizione predefinita: `~/.config/deyecli/config`  
-Sovrascrivibile con la variabile `DEYE_CONFIG=/altro/percorso`.
+Default location: `~/.config/deyecli/config`  
+Override with the `DEYE_CONFIG=/another/path` variable.
 
 ```bash
 mkdir -p ~/.config/deyecli
@@ -54,39 +54,39 @@ cp config.example ~/.config/deyecli/config
 $EDITOR ~/.config/deyecli/config
 ```
 
-Esempio di file compilato:
+Example of a completed config file:
 
 ```ini
-# URL base — cambiare prefisso di regione se necessario
+# Base URL — change region prefix if necessary
 DEYE_BASE_URL=https://eu1-developer.deyecloud.com
 
-# Credenziali applicazione (obbligatorie per ogni chiamata)
-# Ottenibili da https://developer.deyecloud.com
-DEYE_APP_ID=<il-tuo-app-id>
-DEYE_APP_SECRET=<il-tuo-app-secret>
+# Application credentials (required for every call)
+# Obtain them from https://developer.deyecloud.com
+DEYE_APP_ID=<your-app-id>
+DEYE_APP_SECRET=<your-app-secret>
 
-# Credenziali di login — fornire UNO tra username, email o mobile
-DEYE_EMAIL=utente@esempio.com
+# Login credentials — provide ONE of username, email, or mobile
+DEYE_EMAIL=user@example.com
 
-# Password in chiaro — lo script la converte in SHA-256 prima dell'invio
-DEYE_PASSWORD=latuapassword
+# Plaintext password — the script converts it to SHA-256 before sending
+DEYE_PASSWORD=yourpassword
 
-# ID azienda per token business (lasciare vuoto per account personale)
+# Company ID for business token (leave empty for personal account)
 DEYE_COMPANY_ID=
 
-# Token di accesso — aggiornato automaticamente dal comando 'token'
+# Access token — automatically updated by the 'token' command
 DEYE_TOKEN=
 
-# Seriale del dispositivo predefinito usato dai comandi config
+# Default device serial number used by config commands
 DEYE_DEVICE_SN=
 ```
 
-> **Sicurezza:** il file viene letto con un parser riga per riga, senza `eval` né `source`.
-> È sicuro inserire valori con caratteri speciali (token JWT, password con `%`, ecc.).
+> **Security:** The file is read with a line-by-line parser, without `eval` or `source`.
+> It is safe to insert values with special characters (JWT tokens, passwords with `%`, etc.).
 
-### Variabili d'ambiente
+### Environment variables
 
-Tutte le chiavi del file di config si possono passare come variabili d'ambiente:
+All config file keys can be passed as environment variables:
 
 ```bash
 DEYE_APP_ID=xxx DEYE_APP_SECRET=yyy DEYE_EMAIL=me@example.com \
@@ -95,43 +95,43 @@ DEYE_APP_ID=xxx DEYE_APP_SECRET=yyy DEYE_EMAIL=me@example.com \
 
 ---
 
-## Comandi
+## Commands
 
-### `token` — Ottieni un token di accesso
+### `token` — Obtain an access token
 
 `POST /v1.0/account/token`
 
-Esegue il login e ottiene un `accessToken`. Se la chiamata ha successo **il token viene salvato automaticamente** in `DEYE_TOKEN` nel file di config (tramite `jq`).
+Performs login and obtains an `accessToken`. If the call is successful **the token is automatically saved** in `DEYE_TOKEN` in the config file (via `jq`).
 
 ```bash
 ./deyecli.sh token
 ```
 
-**Parametri obbligatori:**
+**Required parameters:**
 
-| Variabile | Flag | Descrizione |
-|-----------|------|-------------|
-| `DEYE_APP_ID` | `--app-id` | ID applicazione Deye |
-| `DEYE_APP_SECRET` | `--app-secret` | Secret applicazione Deye |
-| `DEYE_PASSWORD` | `--password` | Password in chiaro (hashata SHA-256) |
-| `DEYE_EMAIL` *oppure* `DEYE_USERNAME` *oppure* `DEYE_MOBILE` | `--email` / `--username` / `--mobile` | Identificatore di login |
+| Variable | Flag | Description |
+|----------|------|-------------|
+| `DEYE_APP_ID` | `--app-id` | Deye application ID |
+| `DEYE_APP_SECRET` | `--app-secret` | Deye application secret |
+| `DEYE_PASSWORD` | `--password` | Plaintext password (SHA-256 hashed) |
+| `DEYE_EMAIL` *or* `DEYE_USERNAME` *or* `DEYE_MOBILE` | `--email` / `--username` / `--mobile` | Login identifier |
 
-**Parametri opzionali:**
+**Optional parameters:**
 
-| Variabile | Flag | Descrizione |
-|-----------|------|-------------|
-| `DEYE_COUNTRY_CODE` | `--country-code` | Obbligatorio se si usa `DEYE_MOBILE` |
-| `DEYE_COMPANY_ID` | `--company-id` | Per ottenere un token business |
+| Variable | Flag | Description |
+|----------|------|-------------|
+| `DEYE_COUNTRY_CODE` | `--country-code` | Required when using `DEYE_MOBILE` |
+| `DEYE_COMPANY_ID` | `--company-id` | To obtain a business token |
 
-**Esempio:**
+**Example:**
 
 ```bash
 ./deyecli.sh token
 # → POST https://eu1-developer.deyecloud.com/v1.0/account/token?appId=...
-# ✔  DEYE_TOKEN saved to /home/utente/.config/deyecli/config
+# ✔  DEYE_TOKEN saved to /home/user/.config/deyecli/config
 ```
 
-**Risposta (estratto):**
+**Response (excerpt):**
 
 ```json
 {
@@ -143,37 +143,37 @@ Esegue il login e ottiene un `accessToken`. Se la chiamata ha successo **il toke
 }
 ```
 
-> **Nota:** Deye restituisce il token con prefisso `"Bearer "`. Lo script lo rimuove prima di salvarlo e prima di ogni chiamata successiva, evitando il doppio prefisso `Bearer Bearer ...`.
+> **Note:** Deye returns the token with a `"Bearer "` prefix. The script removes it before saving and before each subsequent call, avoiding the double prefix `Bearer Bearer ...`.
 
 ---
 
-### `config-battery` — Parametri configurazione batteria
+### `config-battery` — Battery configuration parameters
 
 `POST /v1.0/config/battery`
 
-Legge i parametri di configurazione della batteria per un inverter ibrido con storage.
+Reads battery configuration parameters for a hybrid inverter with storage.
 
-Il seriale del dispositivo può essere fornito in tre modi equivalenti:
+The device serial number can be provided in three equivalent ways:
 
 ```bash
-# 1. Argomento posizionale
+# 1. Positional argument
 ./deyecli.sh config-battery 2401110313
 
-# 2. Flag esplicito
+# 2. Explicit flag
 ./deyecli.sh config-battery --device-sn 2401110313
 
-# 3. Dal config file (DEYE_DEVICE_SN)
+# 3. From config file (DEYE_DEVICE_SN)
 ./deyecli.sh config-battery
 ```
 
-**Parametri obbligatori:**
+**Required parameters:**
 
-| Variabile | Flag | Descrizione |
-|-----------|------|-------------|
-| `DEYE_TOKEN` | `--token` | Token di accesso |
-| `DEYE_DEVICE_SN` | `--device-sn` o arg posizionale | Seriale dell'inverter ibrido |
+| Variable | Flag | Description |
+|----------|------|-------------|
+| `DEYE_TOKEN` | `--token` | Access token |
+| `DEYE_DEVICE_SN` | `--device-sn` or positional arg | Hybrid inverter serial number |
 
-**Esempio di risposta:**
+**Response example:**
 
 ```json
 {
@@ -187,35 +187,35 @@ Il seriale del dispositivo può essere fornito in tre modi equivalenti:
 }
 ```
 
-> **Attenzione:** il `deviceSn` deve essere quello di un **inverter ibrido** (con batteria), non del collector/logger. Per trovare il seriale corretto usare l'app Deye o l'API `/v1.0/device/list`.
+> **Warning:** The `deviceSn` must be that of a **hybrid inverter** (with battery), not the collector/logger. To find the correct serial number, use the Deye app or the `/v1.0/device/list` API.
 
 ---
 
-### `config-system` — Parametri modalità di lavoro del sistema
+### `config-system` — System work mode parameters
 
 `POST /v1.0/config/system`
 
-Legge la modalità di lavoro corrente del sistema, il pattern di gestione energia e i limiti di potenza configurati per un dispositivo.
+Reads the current system work mode, energy management pattern, and power limits configured for a device.
 
 ```bash
-# Argomento posizionale
+# Positional argument
 ./deyecli.sh config-system 2401110313
 
-# Flag esplicito
+# Explicit flag
 ./deyecli.sh config-system --device-sn 2401110313
 
-# Dal config file (DEYE_DEVICE_SN)
+# From config file (DEYE_DEVICE_SN)
 ./deyecli.sh config-system
 ```
 
-**Parametri obbligatori:**
+**Required parameters:**
 
-| Variabile | Flag | Descrizione |
-|-----------|------|-------------|
-| `DEYE_TOKEN` | `--token` | Token di accesso |
-| `DEYE_DEVICE_SN` | `--device-sn` o arg posizionale | Seriale del dispositivo |
+| Variable | Flag | Description |
+|----------|------|-------------|
+| `DEYE_TOKEN` | `--token` | Access token |
+| `DEYE_DEVICE_SN` | `--device-sn` or positional arg | Device serial number |
 
-**Esempio di risposta:**
+**Response example:**
 
 ```json
 {
@@ -229,61 +229,61 @@ Legge la modalità di lavoro corrente del sistema, il pattern di gestione energi
 }
 ```
 
-**Valori possibili di `systemWorkMode`:**
+**Possible `systemWorkMode` values:**
 
-| Valore | Descrizione |
-|--------|-------------|
-| `SELLING_FIRST` | Vende l'energia in eccesso alla rete |
-| `ZERO_EXPORT_TO_LOAD` | Nessuna esportazione, copre solo i carichi |
-| `ZERO_EXPORT_TO_CT` | Zero export misurato tramite CT (bobina di corrente) |
+| Value | Description |
+|-------|-------------|
+| `SELLING_FIRST` | Sells excess energy to the grid |
+| `ZERO_EXPORT_TO_LOAD` | No export, only covers loads |
+| `ZERO_EXPORT_TO_CT` | Zero export measured via CT (current transformer) |
 
 ---
 
-### `battery-parameter-update` — Imposta un parametro della batteria
+### `battery-parameter-update` — Set a battery parameter
 
 `POST /v1.0/order/battery/parameter/update`
 
-Invia un comando di controllo per impostare il valore di un singolo parametro della batteria. La chiamata ritorna un `orderId` che rappresenta il comando accodato; il dispositivo lo esegue non appena è online.
+Sends a control command to set the value of a single battery parameter. The call returns an `orderId` representing the queued command; the device executes it as soon as it comes online.
 
 ```bash
-# Imposta la corrente massima di carica a 50 A
+# Set maximum charge current to 50 A
 ./deyecli.sh battery-parameter-update \
     --param-type MAX_CHARGE_CURRENT \
     --value 50
 
-# Con device SN esplicito
+# With explicit device SN
 ./deyecli.sh battery-parameter-update \
     --device-sn 2401110313 \
     --param-type MAX_DISCHARGE_CURRENT \
     --value 40
 
-# Device SN come argomento posizionale
+# Device SN as positional argument
 ./deyecli.sh battery-parameter-update 2401110313 \
     --param-type BATT_LOW \
     --value 15
 ```
 
-**Parametri obbligatori:**
+**Required parameters:**
 
-| Variabile | Flag | Descrizione |
-|-----------|------|-------------|
-| `DEYE_TOKEN` | `--token` | Token di accesso |
-| `DEYE_DEVICE_SN` | `--device-sn` o arg posizionale | Seriale del dispositivo |
-| — | `--param-type <TYPE>` | Tipo di parametro (vedi tabella sotto) |
-| — | `--value <intero>` | Valore da impostare |
+| Variable | Flag | Description |
+|----------|------|-------------|
+| `DEYE_TOKEN` | `--token` | Access token |
+| `DEYE_DEVICE_SN` | `--device-sn` or positional arg | Device serial number |
+| — | `--param-type <TYPE>` | Parameter type (see table below) |
+| — | `--value <integer>` | Value to set |
 
-**Tipi di parametro (`--param-type`):**
+**Parameter types (`--param-type`):**
 
-| Valore | Descrizione |
-|--------|-------------|
-| `MAX_CHARGE_CURRENT` | Corrente massima di carica (A) |
-| `MAX_DISCHARGE_CURRENT` | Corrente massima di scarica (A) |
-| `GRID_CHARGE_AMPERE` | Corrente di carica dalla rete (A) |
-| `BATT_LOW` | Soglia batteria scarica / SoC minimo (%) |
+| Value | Description |
+|-------|-------------|
+| `MAX_CHARGE_CURRENT` | Maximum charge current (A) |
+| `MAX_DISCHARGE_CURRENT` | Maximum discharge current (A) |
+| `GRID_CHARGE_AMPERE` | Grid charge current (A) |
+| `BATT_LOW` | Low battery threshold / minimum SoC (%) |
 
-> **Nota API:** la chiave JSON è `paramterType` (typo nella API Deye, manca la seconda `e`). Lo script gestisce questo automaticamente.
+> **API Note:** The JSON key is `paramterType` (typo in the Deye API, missing the second `e`). The script handles this automatically.
 
-**Esempio di risposta:**
+**Response example:**
 
 ```json
 {
@@ -297,50 +297,50 @@ Invia un comando di controllo per impostare il valore di un singolo parametro de
 ```
 
 `connectionStatus`: `0` = Offline, `1` = Online  
-Un `orderId` diverso da `null` conferma che il comando è stato accodato. Quando il dispositivo è online lo esegue e aggiorna i parametri.
+An `orderId` other than `null` confirms the command has been queued. When the device comes online, it executes it and updates the parameters.
 
 ---
 
-## Flusso tipico
+## Typical workflow
 
 ```bash
-# 1. Prima configurazione
+# 1. Initial configuration
 cp config.example ~/.config/deyecli/config
-$EDITOR ~/.config/deyecli/config   # inserire APP_ID, APP_SECRET, EMAIL, PASSWORD
+$EDITOR ~/.config/deyecli/config   # insert APP_ID, APP_SECRET, EMAIL, PASSWORD
 
-# 2. Login — il token viene salvato automaticamente nel config
+# 2. Login — token is automatically saved to config
 ./deyecli.sh token
 
-# 3. Inserire il seriale del proprio inverter nel config
-#    (DEYE_DEVICE_SN=<seriale>)
+# 3. Insert your inverter's serial number in the config
+#    (DEYE_DEVICE_SN=<serial>)
 
-# 4. Leggere la configurazione della batteria
+# 4. Read battery configuration
 ./deyecli.sh config-battery
 ```
 
 ---
 
-## Opzioni globali
+## Global options
 
-Tutte le opzioni possono comparire prima o dopo il nome del comando:
+All options can appear before or after the command name:
 
-| Flag | Variabile | Descrizione |
-|------|-----------|-------------|
-| `--base-url <url>` | `DEYE_BASE_URL` | URL base API |
-| `--app-id <id>` | `DEYE_APP_ID` | ID applicazione |
-| `--app-secret <secret>` | `DEYE_APP_SECRET` | Secret applicazione |
-| `--username <name>` | `DEYE_USERNAME` | Username di login |
-| `--email <email>` | `DEYE_EMAIL` | Email di login |
-| `--mobile <number>` | `DEYE_MOBILE` | Numero di cellulare |
-| `--country-code <code>` | `DEYE_COUNTRY_CODE` | Prefisso internazionale (richiesto con `--mobile`) |
-| `--password <pass>` | `DEYE_PASSWORD` | Password in chiaro (hashata SHA-256 prima dell'invio) |
-| `--company-id <id>` | `DEYE_COMPANY_ID` | ID azienda per token business |
-| `--token <bearer>` | `DEYE_TOKEN` | Token di accesso |
-| `--device-sn <sn>` | `DEYE_DEVICE_SN` | Seriale dispositivo |
-| `--print-query` | `DEYE_PRINT_QUERY` | Stampa tutte le chiamate `curl` eseguite |
-| `-h, --help` | | Mostra l'aiuto |
+| Flag | Variable | Description |
+|------|----------|-------------|
+| `--base-url <url>` | `DEYE_BASE_URL` | API base URL |
+| `--app-id <id>` | `DEYE_APP_ID` | Application ID |
+| `--app-secret <secret>` | `DEYE_APP_SECRET` | Application secret |
+| `--username <name>` | `DEYE_USERNAME` | Login username |
+| `--email <email>` | `DEYE_EMAIL` | Login email |
+| `--mobile <number>` | `DEYE_MOBILE` | Mobile number |
+| `--country-code <code>` | `DEYE_COUNTRY_CODE` | International prefix (required with `--mobile`) |
+| `--password <pass>` | `DEYE_PASSWORD` | Plaintext password (SHA-256 hashed before sending) |
+| `--company-id <id>` | `DEYE_COMPANY_ID` | Company ID for business token |
+| `--token <bearer>` | `DEYE_TOKEN` | Access token |
+| `--device-sn <sn>` | `DEYE_DEVICE_SN` | Device serial number |
+| `--print-query` | `DEYE_PRINT_QUERY` | Print all executed `curl` commands |
+| `-h, --help` | | Show help |
 
-Esempio:
+Example:
 
 ```bash
 ./deyecli.sh station-list --print-query
@@ -349,26 +349,26 @@ Esempio:
 
 ---
 
-## Regioni supportate
+## Supported regions
 
-| Regione | Base URL |
-|---------|----------|
+| Region | Base URL |
+|--------|----------|
 | EU1 (default) | `https://eu1-developer.deyecloud.com` |
 
-Per altre regioni aggiornare `DEYE_BASE_URL` nel config o passare `--base-url`.
+For other regions, update `DEYE_BASE_URL` in the config or pass `--base-url`.
 
 ---
 
-## Riferimenti
+## References
 
 - [Deye Cloud Developer Portal](https://developer.deyecloud.com)
 - [Deye OpenAPI Swagger (EU1)](https://eu1-developer.deyecloud.com/v2/api-docs)
-- [Sample code ufficiale (GitHub)](https://github.com/DeyeCloudDevelopers/deye-openapi-client-sample-code)
+- [Official sample code (GitHub)](https://github.com/DeyeCloudDevelopers/deye-openapi-client-sample-code)
 
 ---
 
-## Supporta il progetto
+## Support the project
 
-Se questo strumento ti è utile, offrimi un caffè ☕
+If this tool is useful to you, buy me a coffee ☕
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-numbor-yellow?logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/numbor)
