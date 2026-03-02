@@ -21,6 +21,9 @@ DEYE_COMPANY_ID="${DEYE_COMPANY_ID:-}"
 DEYE_TOKEN="${DEYE_TOKEN:-}"            # Bearer token from /token endpoint
 DEYE_DEVICE_SN="${DEYE_DEVICE_SN:-}"   # Device serial number
 DEYE_STATION_ID="${DEYE_STATION_ID:-}"  # Station ID (integer)
+DEYE_PRINT_QUERY="${DEYE_PRINT_QUERY:-false}"  # Print curl commands
+
+PRINT_QUERY=0
 
 # Config file location (XDG-compliant)
 CONFIG_FILE="${DEYE_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/deyecli/config}"
@@ -42,10 +45,27 @@ require() {
     done
 }
 
-# Pretty-print JSON if jq is available, otherwise raw output
+# Pretty-print JSON if jq is available, and add human-readable timestamps
+# Finds fields with names containing "time" (case-insensitive) and if they contain
+# a unix epoch timestamp (large number), adds a _readable field with ISO 8601 format
 json_output() {
     if command -v jq &>/dev/null; then
-        jq .
+        jq 'walk(
+          if type == "object" then
+            reduce keys[] as $key (
+              .;
+              if (($key | ascii_downcase) | contains("time")) and
+                 (.[$key] | type == "number") and
+                 (.[$key] > 1000000000) then
+                .[$key + "_readable"] = (.[$key] | todate)
+              else
+                .
+              end
+            )
+          else
+            .
+          end
+        )'
     else
         cat
     fi
@@ -61,6 +81,27 @@ bear_token() {
     local t="$1"
     t="${t#[Bb][Ee][Aa][Rr][Ee][Rr] }"
     printf '%s' "$t"
+}
+
+# Parse common truthy values
+is_truthy() {
+    case "${1,,}" in
+        1|true|yes|on) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Wrapper for curl that optionally prints the full command line
+deye_curl() {
+    if [[ "$PRINT_QUERY" -eq 1 ]]; then
+        local arg formatted=()
+        for arg in "$@"; do
+            formatted+=("$(printf '%q' "$arg")")
+        done
+        echo "↪ curl ${formatted[*]}" >&2
+    fi
+
+    curl "$@"
 }
 
 # Validate battery parameter value: check numeric type and range
@@ -191,6 +232,7 @@ Global options (can also be set in $CONFIG_FILE or as env vars):
   --token <bearer>        Access token from /token endpoint (DEYE_TOKEN)
   --device-sn <sn>        Device serial number (DEYE_DEVICE_SN)
   --station-id <id>       Station ID integer (DEYE_STATION_ID)
+    --print-query           Print all executed curl commands
   -h, --help              Show this help
 
 Examples:
@@ -221,9 +263,11 @@ parse_global_args() {
             --mobile)       DEYE_MOBILE="$2";       shift 2 ;;
             --country-code) DEYE_COUNTRY_CODE="$2"; shift 2 ;;
             --password)     DEYE_PASSWORD="$2";     shift 2 ;;
-            --company-id)   DEYE_COMPANY_ID="$2";   shift 2 ;;            --token)        DEYE_TOKEN="$2";       shift 2 ;;
+            --company-id)   DEYE_COMPANY_ID="$2";   shift 2 ;;
+            --token)        DEYE_TOKEN="$2";       shift 2 ;;
             --device-sn)    DEYE_DEVICE_SN="$2";   shift 2 ;;
             --station-id)   DEYE_STATION_ID="$2";  shift 2 ;;
+            --print-query)  PRINT_QUERY=1;           shift ;;
             -h|--help)      usage; exit 0 ;;
             -*)             err "Unknown option: $1"; usage; exit 1 ;;
             *)              break ;;
@@ -300,7 +344,7 @@ cmd_token() {
     echo "→ POST ${url}" >&2
 
     local response
-    response="$(curl --silent --show-error \
+    response="$(deye_curl --silent --show-error \
         --request POST \
         --url "$url" \
         --header "Content-Type: application/json" \
@@ -330,6 +374,7 @@ cmd_config_battery() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --device-sn) device_sn="$2"; shift 2 ;;
+            --print-query) PRINT_QUERY=1; shift ;;
             --*)         parse_global_args "$1" "$2"; shift 2 ;;
             -h|--help)   usage; exit 0 ;;
             *)           [[ -z "$device_sn" ]] && device_sn="$1"; shift ;;
@@ -357,7 +402,7 @@ cmd_config_battery() {
 
     echo "→ POST ${url}" >&2
 
-    curl --silent --show-error \
+    deye_curl --silent --show-error \
         --request POST \
         --url "$url" \
         --header "Content-Type: application/json" \
@@ -375,6 +420,7 @@ cmd_config_system() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --device-sn) device_sn="$2"; shift 2 ;;
+            --print-query) PRINT_QUERY=1; shift ;;
             --*)         parse_global_args "$1" "$2"; shift 2 ;;
             -h|--help)   usage; exit 0 ;;
             *)           [[ -z "$device_sn" ]] && device_sn="$1"; shift ;;
@@ -402,7 +448,7 @@ cmd_config_system() {
 
     echo "→ POST ${url}" >&2
 
-    curl --silent --show-error \
+    deye_curl --silent --show-error \
         --request POST \
         --url "$url" \
         --header "Content-Type: application/json" \
@@ -424,6 +470,7 @@ cmd_battery_parameter_update() {
             --device-sn)  device_sn="$2";  shift 2 ;;
             --param-type) param_type="$2"; shift 2 ;;
             --value)      value="$2";      shift 2 ;;
+            --print-query) PRINT_QUERY=1; shift ;;
             --*)          parse_global_args "$1" "$2"; shift 2 ;;
             -h|--help)    usage; exit 0 ;;
             *)            [[ -z "$device_sn" ]] && device_sn="$1"; shift ;;
@@ -473,7 +520,7 @@ cmd_battery_parameter_update() {
 
     echo "→ POST ${url}" >&2
 
-    curl --silent --show-error \
+    deye_curl --silent --show-error \
         --request POST \
         --url "$url" \
         --header "Content-Type: application/json" \
@@ -489,6 +536,7 @@ cmd_battery_parameter_update() {
 cmd_station_list() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --print-query) PRINT_QUERY=1; shift ;;
             --*)       parse_global_args "$1" "$2"; shift 2 ;;
             -h|--help) usage; exit 0 ;;
             *)         shift ;;
@@ -510,7 +558,7 @@ cmd_station_list() {
 
     echo "→ POST ${url}" >&2
 
-    curl --silent --show-error \
+    deye_curl --silent --show-error \
         --request POST \
         --url "$url" \
         --header "Content-Type: application/json" \
@@ -528,6 +576,7 @@ cmd_station_latest() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --station-id) station_id="$2"; shift 2 ;;
+            --print-query) PRINT_QUERY=1; shift ;;
             --*)          parse_global_args "$1" "$2"; shift 2 ;;
             -h|--help)    usage; exit 0 ;;
             *)            [[ -z "$station_id" ]] && station_id="$1"; shift ;;
@@ -555,7 +604,7 @@ cmd_station_latest() {
 
     echo "→ POST ${url}" >&2
 
-    curl --silent --show-error \
+    deye_curl --silent --show-error \
         --request POST \
         --url "$url" \
         --header "Content-Type: application/json" \
@@ -573,6 +622,7 @@ cmd_device_latest() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --device-sn) device_sn="$2"; shift 2 ;;
+            --print-query) PRINT_QUERY=1; shift ;;
             --*)         parse_global_args "$1" "$2"; shift 2 ;;
             -h|--help)   usage; exit 0 ;;
             *)           [[ -z "$device_sn" ]] && device_sn="$1"; shift ;;
@@ -600,7 +650,7 @@ cmd_device_latest() {
 
     echo "→ POST ${url}" >&2
 
-    curl --silent --show-error \
+    deye_curl --silent --show-error \
         --request POST \
         --url "$url" \
         --header "Content-Type: application/json" \
@@ -615,6 +665,10 @@ cmd_device_latest() {
 # ---------------------------------------------------------------------------
 main() {
     load_config
+
+    if is_truthy "$DEYE_PRINT_QUERY"; then
+        PRINT_QUERY=1
+    fi
 
     if [[ $# -eq 0 ]]; then
         usage

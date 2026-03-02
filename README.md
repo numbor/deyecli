@@ -1,6 +1,15 @@
 # deyecli
 Bash CLI per le API REST di [Deye Cloud](https://developer.deyecloud.com/api), pensato per controllare e monitorare inverter fotovoltaici Deye direttamente da terminale.
 
+---
+
+> **⚠️ DISCLAIMER**  
+> Questo software è fornito "così com'è", senza garanzie di alcun tipo, esplicite o implicite.  
+> L'autore non è responsabile per eventuali danni, malfunzionamenti, perdite di dati o problemi derivanti dall'uso di questa utility.  
+> Utilizzare a proprio rischio e responsabilità. Si consiglia di testare accuratamente i comandi prima di applicarli in ambienti di produzione.
+
+---
+
 ## Requisiti
 
 | Tool | Note |
@@ -328,7 +337,15 @@ Tutte le opzioni possono comparire prima o dopo il nome del comando:
 | `--company-id <id>` | `DEYE_COMPANY_ID` | ID azienda per token business |
 | `--token <bearer>` | `DEYE_TOKEN` | Token di accesso |
 | `--device-sn <sn>` | `DEYE_DEVICE_SN` | Seriale dispositivo |
+| `--print-query` | `DEYE_PRINT_QUERY` | Stampa tutte le chiamate `curl` eseguite |
 | `-h, --help` | | Mostra l'aiuto |
+
+Esempio:
+
+```bash
+./deyecli.sh station-list --print-query
+# ↪ curl --silent --show-error --request POST --url ...
+```
 
 ---
 

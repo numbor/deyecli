@@ -57,3 +57,10 @@ DEYE_DEVICE_SN=
 # Can be overridden per-call with --station-id <id> or a positional argument.
 # ---------------------------------------------------------------------------
 DEYE_STATION_ID=
+
+# ---------------------------------------------------------------------------
+# Debug option: print all curl calls executed by the script.
+# Accepted truthy values: 1, true, yes, on
+# Equivalent CLI flag: --print-query
+# ---------------------------------------------------------------------------
+DEYE_PRINT_QUERY=false
