@@ -22,6 +22,18 @@ DEYE_TOKEN="${DEYE_TOKEN:-}"            # Bearer token from /token endpoint
 DEYE_DEVICE_SN="${DEYE_DEVICE_SN:-}"   # Device serial number
 DEYE_STATION_ID="${DEYE_STATION_ID:-}"  # Station ID (integer)
 DEYE_PRINT_QUERY="${DEYE_PRINT_QUERY:-false}"  # Print curl commands
+DEYE_CONNECT_TIMEOUT="${DEYE_CONNECT_TIMEOUT:-10}"  # curl connect timeout (seconds)
+DEYE_MAX_TIME="${DEYE_MAX_TIME:-30}"               # curl max time (seconds)
+DEYE_RETRY_MAX="${DEYE_RETRY_MAX:-2}"              # number of retries after first attempt
+DEYE_RETRY_DELAY="${DEYE_RETRY_DELAY:-1}"          # initial retry delay (seconds)
+
+# Exit codes
+EXIT_OK=0
+EXIT_USAGE=2
+EXIT_DEP=3
+EXIT_AUTH=4
+EXIT_NETWORK=5
+EXIT_API=6
 
 PRINT_QUERY=0
 
@@ -40,7 +52,7 @@ require() {
     for cmd in "$@"; do
         if ! command -v "$cmd" &>/dev/null; then
             err "'$cmd' is required but not found in PATH."
-            exit 1
+            exit "$EXIT_DEP"
         fi
     done
 }
@@ -91,17 +103,229 @@ is_truthy() {
     esac
 }
 
+# Validate integer values used by runtime networking settings
+validate_non_negative_int() {
+    local name="$1" value="$2"
+    if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+        err "$name must be a non-negative integer, got: '$value'"
+        return 1
+    fi
+    return 0
+}
+
+validate_positive_int() {
+    local name="$1" value="$2"
+    if ! [[ "$value" =~ ^[1-9][0-9]*$ ]]; then
+        err "$name must be a positive integer, got: '$value'"
+        return 1
+    fi
+    return 0
+}
+
+validate_runtime_settings() {
+    validate_positive_int "DEYE_CONNECT_TIMEOUT" "$DEYE_CONNECT_TIMEOUT" || return 1
+    validate_positive_int "DEYE_MAX_TIME" "$DEYE_MAX_TIME" || return 1
+    validate_non_negative_int "DEYE_RETRY_MAX" "$DEYE_RETRY_MAX" || return 1
+    validate_positive_int "DEYE_RETRY_DELAY" "$DEYE_RETRY_DELAY" || return 1
+    return 0
+}
+
+# Validate station ID: positive integer
+validate_station_id() {
+    local station_id="$1"
+    if ! [[ "$station_id" =~ ^[1-9][0-9]*$ ]]; then
+        err "Station ID must be a positive integer, got: '$station_id'"
+        return 1
+    fi
+    return 0
+}
+
+# Validate device serial number format (basic sanity checks)
+validate_device_sn() {
+    local device_sn="$1"
+    if ! [[ "$device_sn" =~ ^[A-Za-z0-9_-]{6,32}$ ]]; then
+        err "Device serial number format is invalid: '$device_sn'"
+        return 1
+    fi
+    return 0
+}
+
+# Escape string to JSON string-safe representation (without surrounding quotes)
+json_escape() {
+    local text="$1"
+    text="${text//\\/\\\\}"
+    text="${text//\"/\\\"}"
+    text="${text//$'\n'/\\n}"
+    text="${text//$'\r'/\\r}"
+    text="${text//$'\t'/\\t}"
+    printf '%s' "$text"
+}
+
+# Return success state from an API JSON response.
+# If the field is missing, assume success (preserves compatibility).
+json_response_success() {
+    local response="$1"
+    local success=""
+
+    if command -v jq &>/dev/null; then
+        success="$(printf '%s' "$response" | jq -r 'if has("success") then (.success|tostring) else "true" end' 2>/dev/null || true)"
+    else
+        success="$(printf '%s' "$response" | grep -o '"success"[[:space:]]*:[[:space:]]*[^,}]*' | head -1 | cut -d: -f2- | tr -d ' "' || true)"
+        [[ -z "$success" ]] && success="true"
+    fi
+
+    [[ "${success,,}" == "true" ]]
+}
+
+# Extract accessToken from response JSON
+json_extract_access_token() {
+    local response="$1"
+    local token=""
+
+    if command -v jq &>/dev/null; then
+        token="$(printf '%s' "$response" | jq -r '.accessToken // empty' 2>/dev/null || true)"
+    else
+        token="$(printf '%s' "$response" | sed -n 's/.*"accessToken"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    fi
+
+    printf '%s' "$token"
+}
+
+# Redact sensitive headers from debug output
+sanitize_header_for_log() {
+    local header="$1"
+    if [[ "${header,,}" == authorization:* ]]; then
+        printf '%s' 'authorization: Bearer ***REDACTED***'
+    else
+        printf '%s' "$header"
+    fi
+}
+
 # Wrapper for curl that optionally prints the full command line
 deye_curl() {
+    local -a args
+    args=("$@")
+
     if [[ "$PRINT_QUERY" -eq 1 ]]; then
-        local arg formatted=()
-        for arg in "$@"; do
+        local i arg formatted=()
+        for ((i=0; i<${#args[@]}; i++)); do
+            arg="${args[i]}"
+            if [[ "$arg" == "--header" || "$arg" == "-H" ]]; then
+                formatted+=("$(printf '%q' "$arg")")
+                if (( i + 1 < ${#args[@]} )); then
+                    i=$((i + 1))
+                    formatted+=("$(printf '%q' "$(sanitize_header_for_log "${args[i]}")")")
+                fi
+                continue
+            fi
             formatted+=("$(printf '%q' "$arg")")
         done
         echo "↪ curl ${formatted[*]}" >&2
     fi
 
-    curl "$@"
+    curl "${args[@]}"
+}
+
+# Execute a POST JSON request with retry/timeout/error classification.
+# Prints raw JSON response to stdout on success.
+api_post_json() {
+    local url="$1"
+    local body="$2"
+    local auth_token="${3:-}"
+
+    require curl
+    if ! validate_runtime_settings; then
+        return "$EXIT_USAGE"
+    fi
+
+    local -a curl_args
+    curl_args=(
+        --silent --show-error
+        --connect-timeout "$DEYE_CONNECT_TIMEOUT"
+        --max-time "$DEYE_MAX_TIME"
+        --request POST
+        --url "$url"
+        --header "Content-Type: application/json"
+        --header "Accept: application/json"
+        --data "$body"
+    )
+
+    if [[ -n "$auth_token" ]]; then
+        curl_args+=(--header "authorization: Bearer $(bear_token "$auth_token")")
+    fi
+
+    local max_attempts=$((DEYE_RETRY_MAX + 1))
+    local attempt=1
+    local delay="$DEYE_RETRY_DELAY"
+    local raw=""
+    local response=""
+    local http_code="000"
+    local curl_status=0
+
+    while (( attempt <= max_attempts )); do
+        set +e
+        raw="$(deye_curl "${curl_args[@]}" --write-out $'\n%{http_code}')"
+        curl_status=$?
+        set -e
+
+        if [[ "$raw" == *$'\n'* ]]; then
+            http_code="${raw##*$'\n'}"
+            response="${raw%$'\n'*}"
+        else
+            http_code="000"
+            response="$raw"
+        fi
+
+        local should_retry=0
+        local retry_reason=""
+        if (( curl_status != 0 )); then
+            should_retry=1
+            retry_reason="network error (curl exit ${curl_status})"
+        elif [[ "$http_code" =~ ^5[0-9][0-9]$ || "$http_code" == "429" || "$http_code" == "000" ]]; then
+            should_retry=1
+            retry_reason="HTTP ${http_code}"
+        fi
+
+        if (( should_retry == 1 && attempt < max_attempts )); then
+            err "Transient error calling ${url}: ${retry_reason}. Retry ${attempt}/${DEYE_RETRY_MAX} in ${delay}s."
+            sleep "$delay"
+            attempt=$((attempt + 1))
+            delay=$((delay * 2))
+            continue
+        fi
+
+        break
+    done
+
+    if (( curl_status != 0 )); then
+        err "Network error calling ${url} (curl exit ${curl_status})."
+        [[ -n "$response" ]] && printf '%s\n' "$response" | json_output >&2 || true
+        return "$EXIT_NETWORK"
+    fi
+
+    if [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+        case "$http_code" in
+            401|403)
+                err "Authentication failed for ${url} (HTTP ${http_code})."
+                [[ -n "$response" ]] && printf '%s\n' "$response" | json_output >&2 || true
+                return "$EXIT_AUTH"
+                ;;
+            *)
+                err "API request failed for ${url} (HTTP ${http_code})."
+                [[ -n "$response" ]] && printf '%s\n' "$response" | json_output >&2 || true
+                return "$EXIT_API"
+                ;;
+        esac
+    fi
+
+    if ! json_response_success "$response"; then
+        err "API returned success=false for ${url}."
+        printf '%s\n' "$response" | json_output >&2
+        return "$EXIT_API"
+    fi
+
+    printf '%s' "$response"
+    return "$EXIT_OK"
 }
 
 # Validate battery parameter value: check numeric type and range
@@ -150,20 +374,37 @@ validate_battery_param() {
 # Write or update a KEY=VALUE line in the config file (safe with any chars)
 config_set() {
     local key="$1" value="$2"
-    mkdir -p "$(dirname "$CONFIG_FILE")"
-    [[ -f "$CONFIG_FILE" ]] || touch "$CONFIG_FILE"
+    local config_dir tmp old_umask
+    config_dir="$(dirname "$CONFIG_FILE")"
+    old_umask="$(umask)"
+    umask 077
+
+    tmp=""
+    trap '[[ -n "${tmp:-}" && -f "$tmp" ]] && rm -f "$tmp"; umask "$old_umask"' RETURN
+
+    mkdir -p "$config_dir"
+    [[ -f "$CONFIG_FILE" ]] || : > "$CONFIG_FILE"
+    chmod 600 "$CONFIG_FILE" 2>/dev/null || true
+
+    tmp="$(mktemp "${CONFIG_FILE}.tmp.XXXXXX")"
     if grep -q "^[[:space:]]*${key}[[:space:]]*=" "$CONFIG_FILE"; then
-        local tmp
-        tmp="$(mktemp)"
         awk -v key="$key" -v val="$value" \
             'BEGIN{replaced=0}
              $0 ~ "^[[:space:]]*"key"[[:space:]]*=" { print key"="val; replaced=1; next }
              { print }
              END { if(!replaced) print key"="val }' \
-            "$CONFIG_FILE" > "$tmp" && mv "$tmp" "$CONFIG_FILE"
+            "$CONFIG_FILE" > "$tmp"
     else
-        printf '\n%s=%s\n' "$key" "$value" >> "$CONFIG_FILE"
+        cat "$CONFIG_FILE" > "$tmp"
+        printf '\n%s=%s\n' "$key" "$value" >> "$tmp"
     fi
+
+    chmod 600 "$tmp" 2>/dev/null || true
+    mv "$tmp" "$CONFIG_FILE"
+
+    tmp=""
+    umask "$old_umask"
+    trap - RETURN
 }
 
 # Load config file if it exists.
@@ -232,7 +473,11 @@ Global options (can also be set in $CONFIG_FILE or as env vars):
   --token <bearer>        Access token from /token endpoint (DEYE_TOKEN)
   --device-sn <sn>        Device serial number (DEYE_DEVICE_SN)
   --station-id <id>       Station ID integer (DEYE_STATION_ID)
-    --print-query           Print all executed curl commands
+    --connect-timeout <s>   curl connect timeout in seconds (DEYE_CONNECT_TIMEOUT)
+    --max-time <s>          curl max time in seconds (DEYE_MAX_TIME)
+    --retry-max <n>         Number of retries for transient failures (DEYE_RETRY_MAX)
+    --retry-delay <s>       Initial retry delay in seconds (DEYE_RETRY_DELAY)
+    --print-query           Print curl commands with sensitive headers redacted
   -h, --help              Show this help
 
 Examples:
@@ -267,9 +512,13 @@ parse_global_args() {
             --token)        DEYE_TOKEN="$2";       shift 2 ;;
             --device-sn)    DEYE_DEVICE_SN="$2";   shift 2 ;;
             --station-id)   DEYE_STATION_ID="$2";  shift 2 ;;
+            --connect-timeout) DEYE_CONNECT_TIMEOUT="$2"; shift 2 ;;
+            --max-time)     DEYE_MAX_TIME="$2";     shift 2 ;;
+            --retry-max)    DEYE_RETRY_MAX="$2";    shift 2 ;;
+            --retry-delay)  DEYE_RETRY_DELAY="$2";  shift 2 ;;
             --print-query)  PRINT_QUERY=1;           shift ;;
             -h|--help)      usage; exit 0 ;;
-            -*)             err "Unknown option: $1"; usage; exit 1 ;;
+            -*)             err "Unknown option: $1"; usage; exit "$EXIT_USAGE" ;;
             *)              break ;;
         esac
     done
@@ -301,10 +550,8 @@ cmd_token() {
     if [[ ${#missing[@]} -gt 0 ]]; then
         err "Missing required parameter(s):"
         for m in "${missing[@]}"; do err "  - $m"; done
-        exit 1
+        exit "$EXIT_USAGE"
     fi
-
-    require curl
 
     # SHA-256 hash the plaintext password
     local hashed_password
@@ -328,14 +575,20 @@ cmd_token() {
              | if $companyId   != "" then . + { companyId: ($companyId | tonumber) }               else . end'
         )"
     else
-        # Fallback: build JSON manually (no jq)
+        # Fallback: build JSON manually with proper escaping (no jq)
         local _json
-        _json="{ \"appSecret\": \"${DEYE_APP_SECRET}\", \"password\": \"${hashed_password}\""
-        [[ -n "$DEYE_USERNAME" ]]    && _json+=", \"username\": \"${DEYE_USERNAME}\""
-        [[ -n "$DEYE_EMAIL" ]]       && _json+=", \"email\": \"${DEYE_EMAIL}\""
-        [[ -n "$DEYE_MOBILE" ]]      && _json+=", \"mobile\": \"${DEYE_MOBILE}\", \"countryCode\": \"${DEYE_COUNTRY_CODE}\""
-        [[ -n "$DEYE_COMPANY_ID" ]]  && _json+=", \"companyId\": ${DEYE_COMPANY_ID}"
-        _json+=" }"
+        _json="{\"appSecret\":\"$(json_escape "$DEYE_APP_SECRET")\",\"password\":\"$(json_escape "$hashed_password")\""
+        [[ -n "$DEYE_USERNAME" ]]    && _json+=",\"username\":\"$(json_escape "$DEYE_USERNAME")\""
+        [[ -n "$DEYE_EMAIL" ]]       && _json+=",\"email\":\"$(json_escape "$DEYE_EMAIL")\""
+        [[ -n "$DEYE_MOBILE" ]]      && _json+=",\"mobile\":\"$(json_escape "$DEYE_MOBILE")\",\"countryCode\":\"$(json_escape "$DEYE_COUNTRY_CODE")\""
+        if [[ -n "$DEYE_COMPANY_ID" ]]; then
+            if ! [[ "$DEYE_COMPANY_ID" =~ ^[0-9]+$ ]]; then
+                err "DEYE_COMPANY_ID must be a non-negative integer, got: '$DEYE_COMPANY_ID'"
+                exit "$EXIT_USAGE"
+            fi
+            _json+=",\"companyId\":${DEYE_COMPANY_ID}"
+        fi
+        _json+="}"
         body="$_json"
     fi
 
@@ -344,24 +597,19 @@ cmd_token() {
     echo "→ POST ${url}" >&2
 
     local response
-    response="$(deye_curl --silent --show-error \
-        --request POST \
-        --url "$url" \
-        --header "Content-Type: application/json" \
-        --header "Accept: application/json" \
-        --data "$body")"
+    response="$(api_post_json "$url" "$body")" || { local rc=$?; exit "$rc"; }
 
     printf '%s\n' "$response" | json_output
 
     # If successful, save the token to the config file
-    local success
-    success="$(printf '%s' "$response" | grep -o '"success":[^,}]*' | head -1 | cut -d: -f2 | tr -d ' "')"
-    if [[ "$success" == "true" ]] && command -v jq &>/dev/null; then
+    if json_response_success "$response"; then
         local token
-        token="$(printf '%s' "$response" | jq -r '.accessToken')"
-        token="$(bear_token "$token")"
-        config_set "DEYE_TOKEN" "$token"
-        echo "✔  DEYE_TOKEN saved to ${CONFIG_FILE}" >&2
+        token="$(json_extract_access_token "$response")"
+        if [[ -n "$token" ]]; then
+            token="$(bear_token "$token")"
+            config_set "DEYE_TOKEN" "$token"
+            echo "✔  DEYE_TOKEN saved to ${CONFIG_FILE}" >&2
+        fi
     fi
 }
 
@@ -388,10 +636,12 @@ cmd_config_battery() {
     if [[ ${#missing[@]} -gt 0 ]]; then
         err "Missing required parameter(s):"
         for m in "${missing[@]}"; do err "  - $m"; done
-        exit 1
+        exit "$EXIT_USAGE"
     fi
 
-    require curl
+    if ! validate_device_sn "$device_sn"; then
+        exit "$EXIT_USAGE"
+    fi
 
     local body="{ \"deviceSn\": \"${device_sn}\" }"
     if command -v jq &>/dev/null; then
@@ -402,14 +652,9 @@ cmd_config_battery() {
 
     echo "→ POST ${url}" >&2
 
-    deye_curl --silent --show-error \
-        --request POST \
-        --url "$url" \
-        --header "Content-Type: application/json" \
-        --header "Accept: application/json" \
-        --header "authorization: Bearer $(bear_token "${DEYE_TOKEN}")" \
-        --data "$body" \
-    | json_output
+    local response
+    response="$(api_post_json "$url" "$body" "$DEYE_TOKEN")" || { local rc=$?; exit "$rc"; }
+    printf '%s\n' "$response" | json_output
 }
 
 # ---------------------------------------------------------------------------
@@ -434,10 +679,12 @@ cmd_config_system() {
     if [[ ${#missing[@]} -gt 0 ]]; then
         err "Missing required parameter(s):"
         for m in "${missing[@]}"; do err "  - $m"; done
-        exit 1
+        exit "$EXIT_USAGE"
     fi
 
-    require curl
+    if ! validate_device_sn "$device_sn"; then
+        exit "$EXIT_USAGE"
+    fi
 
     local body="{ \"deviceSn\": \"${device_sn}\" }"
     if command -v jq &>/dev/null; then
@@ -448,14 +695,9 @@ cmd_config_system() {
 
     echo "→ POST ${url}" >&2
 
-    deye_curl --silent --show-error \
-        --request POST \
-        --url "$url" \
-        --header "Content-Type: application/json" \
-        --header "Accept: application/json" \
-        --header "authorization: Bearer $(bear_token "${DEYE_TOKEN}")" \
-        --data "$body" \
-    | json_output
+    local response
+    response="$(api_post_json "$url" "$body" "$DEYE_TOKEN")" || { local rc=$?; exit "$rc"; }
+    printf '%s\n' "$response" | json_output
 }
 
 # ---------------------------------------------------------------------------
@@ -481,7 +723,7 @@ cmd_battery_parameter_update() {
     local valid_types="MAX_CHARGE_CURRENT MAX_DISCHARGE_CURRENT GRID_CHARGE_AMPERE BATT_LOW"
     if [[ -n "$param_type" ]] && ! echo " $valid_types " | grep -qw "$param_type"; then
         err "Invalid --param-type '$param_type'. Valid values: $valid_types"
-        exit 1
+        exit "$EXIT_USAGE"
     fi
 
     local missing=()
@@ -493,15 +735,17 @@ cmd_battery_parameter_update() {
     if [[ ${#missing[@]} -gt 0 ]]; then
         err "Missing required parameter(s):"
         for m in "${missing[@]}"; do err "  - $m"; done
-        exit 1
+        exit "$EXIT_USAGE"
+    fi
+
+    if ! validate_device_sn "$device_sn"; then
+        exit "$EXIT_USAGE"
     fi
 
     # Validate parameter value (numeric + range check)
     if ! validate_battery_param "$param_type" "$value"; then
-        exit 1
+        exit "$EXIT_USAGE"
     fi
-
-    require curl
 
     local body
     if command -v jq &>/dev/null; then
@@ -520,14 +764,9 @@ cmd_battery_parameter_update() {
 
     echo "→ POST ${url}" >&2
 
-    deye_curl --silent --show-error \
-        --request POST \
-        --url "$url" \
-        --header "Content-Type: application/json" \
-        --header "Accept: application/json" \
-        --header "authorization: Bearer $(bear_token "${DEYE_TOKEN}")" \
-        --data "$body" \
-    | json_output
+    local response
+    response="$(api_post_json "$url" "$body" "$DEYE_TOKEN")" || { local rc=$?; exit "$rc"; }
+    printf '%s\n' "$response" | json_output
 }
 
 # ---------------------------------------------------------------------------
@@ -549,23 +788,16 @@ cmd_station_list() {
     if [[ ${#missing[@]} -gt 0 ]]; then
         err "Missing required parameter(s):"
         for m in "${missing[@]}"; do err "  - $m"; done
-        exit 1
+        exit "$EXIT_USAGE"
     fi
-
-    require curl
 
     local url="${DEYE_BASE_URL}/v1.0/station/list"
 
     echo "→ POST ${url}" >&2
 
-    deye_curl --silent --show-error \
-        --request POST \
-        --url "$url" \
-        --header "Content-Type: application/json" \
-        --header "Accept: application/json" \
-        --header "authorization: Bearer $(bear_token "${DEYE_TOKEN}")" \
-        --data '{}' \
-    | json_output
+    local response
+    response="$(api_post_json "$url" '{}' "$DEYE_TOKEN")" || { local rc=$?; exit "$rc"; }
+    printf '%s\n' "$response" | json_output
 }
 
 # ---------------------------------------------------------------------------
@@ -590,10 +822,12 @@ cmd_station_latest() {
     if [[ ${#missing[@]} -gt 0 ]]; then
         err "Missing required parameter(s):"
         for m in "${missing[@]}"; do err "  - $m"; done
-        exit 1
+        exit "$EXIT_USAGE"
     fi
 
-    require curl
+    if ! validate_station_id "$station_id"; then
+        exit "$EXIT_USAGE"
+    fi
 
     local body="{ \"stationId\": ${station_id} }"
     if command -v jq &>/dev/null; then
@@ -604,14 +838,9 @@ cmd_station_latest() {
 
     echo "→ POST ${url}" >&2
 
-    deye_curl --silent --show-error \
-        --request POST \
-        --url "$url" \
-        --header "Content-Type: application/json" \
-        --header "Accept: application/json" \
-        --header "authorization: Bearer $(bear_token "${DEYE_TOKEN}")" \
-        --data "$body" \
-    | json_output
+    local response
+    response="$(api_post_json "$url" "$body" "$DEYE_TOKEN")" || { local rc=$?; exit "$rc"; }
+    printf '%s\n' "$response" | json_output
 }
 
 # ---------------------------------------------------------------------------
@@ -636,10 +865,12 @@ cmd_device_latest() {
     if [[ ${#missing[@]} -gt 0 ]]; then
         err "Missing required parameter(s):"
         for m in "${missing[@]}"; do err "  - $m"; done
-        exit 1
+        exit "$EXIT_USAGE"
     fi
 
-    require curl
+    if ! validate_device_sn "$device_sn"; then
+        exit "$EXIT_USAGE"
+    fi
 
     local body="{ \"deviceList\": [\"${device_sn}\"] }"
     if command -v jq &>/dev/null; then
@@ -650,14 +881,9 @@ cmd_device_latest() {
 
     echo "→ POST ${url}" >&2
 
-    deye_curl --silent --show-error \
-        --request POST \
-        --url "$url" \
-        --header "Content-Type: application/json" \
-        --header "Accept: application/json" \
-        --header "authorization: Bearer $(bear_token "${DEYE_TOKEN}")" \
-        --data "$body" \
-    | json_output
+    local response
+    response="$(api_post_json "$url" "$body" "$DEYE_TOKEN")" || { local rc=$?; exit "$rc"; }
+    printf '%s\n' "$response" | json_output
 }
 
 # ---------------------------------------------------------------------------
@@ -668,6 +894,10 @@ main() {
 
     if is_truthy "$DEYE_PRINT_QUERY"; then
         PRINT_QUERY=1
+    fi
+
+    if ! validate_runtime_settings; then
+        exit "$EXIT_USAGE"
     fi
 
     if [[ $# -eq 0 ]]; then
@@ -695,7 +925,7 @@ main() {
         *)
             err "Unknown command: '$command'"
             usage
-            exit 1
+            exit "$EXIT_USAGE"
             ;;
     esac
 }
