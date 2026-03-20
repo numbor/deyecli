@@ -31,6 +31,7 @@ DEYE_WEATHER_LON="${DEYE_WEATHER_LON:-}"           # longitude for weather forec
 DEYE_SOLAR_FORECAST_HOURS="${DEYE_SOLAR_FORECAST_HOURS:-12}"  # lookahead window
 DEYE_SOLAR_CLOUD_MAX="${DEYE_SOLAR_CLOUD_MAX:-70}"            # max cloud cover (%)
 DEYE_SOLAR_LOW_CHARGE_CURRENT="${DEYE_SOLAR_LOW_CHARGE_CURRENT:-20}"  # target MAX_CHARGE_CURRENT
+DEYE_SOLAR_DEFAULT_CHARGE_CURRENT="${DEYE_SOLAR_DEFAULT_CHARGE_CURRENT:-}"  # restore value, used only when restore option is enabled
 DEYE_SOLAR_CRON_MINUTE="${DEYE_SOLAR_CRON_MINUTE:-5}"                # minute within selected hours
 DEYE_SOLAR_CRON_FILE="${DEYE_SOLAR_CRON_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/deyecli/solar-charge.cron}"
 
@@ -488,7 +489,8 @@ Commands:
                              Usage: device-latest [--device-sn <sn>] [<sn>]
     solar-charge-cron          Build a crontab-compatible file to slow battery charge when sunny
                                                          Usage: solar-charge-cron --lat <lat> --lon <lon> [--hours <n>] [--cloud-max <0-100>]
-                                                                                                     [--low-charge-current <0-200>] [--minute <0-59>]
+                                                                                                       [--low-charge-current <0-200>] [--restore-default-charge-current]
+                                                                                                       [--default-charge-current <0-200>] [--minute <0-59>]
                                                        [--cron-file <path>] [--device-sn <sn>] [--print-slots] [--dry-run]
 
 Global options (can also be set in $CONFIG_FILE or as env vars):
@@ -517,6 +519,11 @@ solar-charge-cron options:
     --hours <n>                 Forecast window in hours (default: DEYE_SOLAR_FORECAST_HOURS)
     --cloud-max <0-100>         Max cloud cover to treat as "good sun" (default: DEYE_SOLAR_CLOUD_MAX)
     --low-charge-current <n>    Value for MAX_CHARGE_CURRENT when sunny (default: DEYE_SOLAR_LOW_CHARGE_CURRENT)
+    --restore-default-charge-current
+                                                             Add a final cron line to restore MAX_CHARGE_CURRENT after the last sunny slot
+    --default-charge-current <n>
+                                                             Value restored after the last sunny slot; implies restore option
+                                                             (default if restore is enabled: auto-detect via config-battery)
     --minute <0-59>             Cron minute for scheduled runs (default: DEYE_SOLAR_CRON_MINUTE)
     --cron-file <path>          Output crontab-compatible file (default: DEYE_SOLAR_CRON_FILE)
     --device-sn <sn>            Optional explicit device serial in generated commands
@@ -941,9 +948,11 @@ cmd_solar_charge_cron() {
     local forecast_hours="${DEYE_SOLAR_FORECAST_HOURS:-12}"
     local cloud_max="${DEYE_SOLAR_CLOUD_MAX:-70}"
     local low_charge_current="${DEYE_SOLAR_LOW_CHARGE_CURRENT:-20}"
+    local default_charge_current="${DEYE_SOLAR_DEFAULT_CHARGE_CURRENT:-}"
     local cron_minute="${DEYE_SOLAR_CRON_MINUTE:-5}"
     local cron_file="${DEYE_SOLAR_CRON_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/deyecli/solar-charge.cron}"
     local device_sn="${DEYE_DEVICE_SN:-}"
+    local restore_default=0
     local print_slots=0
     local dry_run=0
 
@@ -954,6 +963,8 @@ cmd_solar_charge_cron() {
             --hours)               forecast_hours="$2"; shift 2 ;;
             --cloud-max)           cloud_max="$2"; shift 2 ;;
             --low-charge-current)  low_charge_current="$2"; shift 2 ;;
+            --restore-default-charge-current) restore_default=1; shift ;;
+            --default-charge-current) default_charge_current="$2"; restore_default=1; shift 2 ;;
             --minute)              cron_minute="$2"; shift 2 ;;
             --cron-file)           cron_file="$2"; shift 2 ;;
             --device-sn)           device_sn="$2"; shift 2 ;;
@@ -996,6 +1007,9 @@ cmd_solar_charge_cron() {
         exit "$EXIT_USAGE"
     fi
     if ! validate_battery_param "MAX_CHARGE_CURRENT" "$low_charge_current"; then
+        exit "$EXIT_USAGE"
+    fi
+    if [[ -n "$default_charge_current" ]] && ! validate_battery_param "MAX_CHARGE_CURRENT" "$default_charge_current"; then
         exit "$EXIT_USAGE"
     fi
     if [[ -n "$device_sn" ]] && ! validate_device_sn "$device_sn"; then
@@ -1137,7 +1151,38 @@ cmd_solar_charge_cron() {
     local generated_on
     generated_on="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
+    if (( restore_default == 1 && ${#sunny_slots[@]} > 0 )) && [[ -z "$default_charge_current" ]]; then
+        if [[ -z "$device_sn" ]]; then
+            err "Cannot auto-detect default MAX_CHARGE_CURRENT without --device-sn or DEYE_DEVICE_SN."
+            err "Provide --default-charge-current explicitly, or configure DEYE_DEVICE_SN."
+            exit "$EXIT_USAGE"
+        fi
+        if [[ -z "$DEYE_TOKEN" ]]; then
+            err "Cannot auto-detect default MAX_CHARGE_CURRENT without DEYE_TOKEN."
+            err "Provide --default-charge-current explicitly, or configure DEYE_TOKEN."
+            exit "$EXIT_USAGE"
+        fi
+
+        local config_body config_url config_response
+        config_body="$(jq -n --arg deviceSn "$device_sn" '{ deviceSn: $deviceSn }')"
+        config_url="${DEYE_BASE_URL}/v1.0/config/battery"
+        echo "→ POST ${config_url} (detect default MAX_CHARGE_CURRENT)" >&2
+        config_response="$(api_post_json "$config_url" "$config_body" "$DEYE_TOKEN")" || { local rc=$?; exit "$rc"; }
+        default_charge_current="$(printf '%s' "$config_response" | jq -r '.maxChargeCurrent // .data.maxChargeCurrent // empty' 2>/dev/null || true)"
+
+        if [[ -z "$default_charge_current" ]]; then
+            err "Unable to detect default MAX_CHARGE_CURRENT from config-battery response."
+            printf '%s\n' "$config_response" | json_output >&2
+            exit "$EXIT_API"
+        fi
+
+        if ! validate_battery_param "MAX_CHARGE_CURRENT" "$default_charge_current"; then
+            exit "$EXIT_API"
+        fi
+    fi
+
     local -a cron_lines=()
+    local restore_line=""
     local ts date_part time_part year month day hour key
     declare -A seen
     for ts in "${sunny_slots[@]}"; do
@@ -1157,9 +1202,32 @@ cmd_solar_charge_cron() {
         cron_lines+=("${cron_minute} ${hour} ${day} ${month} * [ \"\$(date +\\%Y-\\%m-\\%d)\" = \"${date_part}\" ] && DEYE_CONFIG=${config_q} ${script_q} battery-parameter-update --param-type MAX_CHARGE_CURRENT --value ${low_charge_current}${device_q} >/dev/null 2>&1")
     done
 
+    if (( restore_default == 1 && ${#sunny_slots[@]} > 0 )); then
+        local last_ts restore_ts restore_date restore_time restore_year restore_month restore_day restore_hour
+        last_ts="${sunny_slots[${#sunny_slots[@]} - 1]}"
+        restore_ts="$(date -d "${last_ts}:00 +1 hour" +"%Y-%m-%dT%H:%M" 2>/dev/null || true)"
+        if [[ -z "$restore_ts" ]]; then
+            err "Unable to compute restore time from forecast slot '${last_ts}'."
+            exit "$EXIT_API"
+        fi
+
+        restore_date="${restore_ts%%T*}"
+        restore_time="${restore_ts#*T}"
+        restore_hour="${restore_time%%:*}"
+        IFS='-' read -r restore_year restore_month restore_day <<< "$restore_date"
+        restore_month=$((10#$restore_month))
+        restore_day=$((10#$restore_day))
+        restore_hour=$((10#$restore_hour))
+
+        restore_line="${cron_minute} ${restore_hour} ${restore_day} ${restore_month} * [ \"\$(date +\\%Y-\\%m-\\%d)\" = \"${restore_date}\" ] && DEYE_CONFIG=${config_q} ${script_q} battery-parameter-update --param-type MAX_CHARGE_CURRENT --value ${default_charge_current}${device_q} >/dev/null 2>&1"
+    fi
+
     local cron_content
     cron_content="# deyecli solar-charge-cron generated at ${generated_on}\n"
     cron_content+="# Location: lat=${latitude}, lon=${longitude}; forecast_hours=${forecast_hours}; cloud_max=${cloud_max}\n"
+    if (( restore_default == 1 )) && [[ -n "$default_charge_current" ]]; then
+        cron_content+="# Restore MAX_CHARGE_CURRENT to ${default_charge_current} after the last sunny slot\n"
+    fi
     cron_content+="# Install: crontab $(shell_quote "$cron_file")\n"
     cron_content+="SHELL=/bin/bash\n"
     cron_content+="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
@@ -1172,7 +1240,12 @@ cmd_solar_charge_cron() {
         for line in "${cron_lines[@]}"; do
             cron_content+="${line}\n"
         done
-        echo "✔ Detected ${#cron_lines[@]} sunny slot(s)." >&2
+        echo "✔ Detected ${#sunny_slots[@]} sunny slot(s)." >&2
+        if [[ -n "$restore_line" ]]; then
+            cron_content+="# Restore default MAX_CHARGE_CURRENT\n"
+            cron_content+="${restore_line}\n"
+            echo "✔ Restore MAX_CHARGE_CURRENT scheduled to ${default_charge_current} after the last sunny slot." >&2
+        fi
     fi
 
     if (( dry_run == 1 )); then
