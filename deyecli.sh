@@ -26,6 +26,13 @@ DEYE_CONNECT_TIMEOUT="${DEYE_CONNECT_TIMEOUT:-10}"  # curl connect timeout (seco
 DEYE_MAX_TIME="${DEYE_MAX_TIME:-30}"               # curl max time (seconds)
 DEYE_RETRY_MAX="${DEYE_RETRY_MAX:-2}"              # number of retries after first attempt
 DEYE_RETRY_DELAY="${DEYE_RETRY_DELAY:-1}"          # initial retry delay (seconds)
+DEYE_WEATHER_LAT="${DEYE_WEATHER_LAT:-}"           # latitude for weather forecast
+DEYE_WEATHER_LON="${DEYE_WEATHER_LON:-}"           # longitude for weather forecast
+DEYE_SOLAR_FORECAST_HOURS="${DEYE_SOLAR_FORECAST_HOURS:-12}"  # lookahead window
+DEYE_SOLAR_CLOUD_MAX="${DEYE_SOLAR_CLOUD_MAX:-70}"            # max cloud cover (%)
+DEYE_SOLAR_LOW_CHARGE_CURRENT="${DEYE_SOLAR_LOW_CHARGE_CURRENT:-20}"  # target MAX_CHARGE_CURRENT
+DEYE_SOLAR_CRON_MINUTE="${DEYE_SOLAR_CRON_MINUTE:-5}"                # minute within selected hours
+DEYE_SOLAR_CRON_FILE="${DEYE_SOLAR_CRON_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/deyecli/solar-charge.cron}"
 
 # Exit codes
 EXIT_OK=0
@@ -122,6 +129,19 @@ validate_positive_int() {
     return 0
 }
 
+validate_float_range() {
+    local name="$1" value="$2" min="$3" max="$4"
+    if ! [[ "$value" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+        err "$name must be a number, got: '$value'"
+        return 1
+    fi
+    if ! awk -v v="$value" -v mn="$min" -v mx="$max" 'BEGIN { exit !(v >= mn && v <= mx) }'; then
+        err "$name must be between $min and $max, got: '$value'"
+        return 1
+    fi
+    return 0
+}
+
 validate_runtime_settings() {
     validate_positive_int "DEYE_CONNECT_TIMEOUT" "$DEYE_CONNECT_TIMEOUT" || return 1
     validate_positive_int "DEYE_MAX_TIME" "$DEYE_MAX_TIME" || return 1
@@ -159,6 +179,13 @@ json_escape() {
     text="${text//$'\r'/\\r}"
     text="${text//$'\t'/\\t}"
     printf '%s' "$text"
+}
+
+# Quote a shell argument safely using single-quote style.
+shell_quote() {
+    local value="$1"
+    value="${value//\'/\'\"\'\"\'}"
+    printf "'%s'" "$value"
 }
 
 # Return success state from an API JSON response.
@@ -459,6 +486,10 @@ Commands:
                              Usage: station-latest [--station-id <id>] [<id>]
   device-latest              Fetch latest raw measure-point data of a device (POST /v1.0/device/latest)
                              Usage: device-latest [--device-sn <sn>] [<sn>]
+    solar-charge-cron          Build a crontab-compatible file to slow battery charge when sunny
+                                                         Usage: solar-charge-cron --lat <lat> --lon <lon> [--hours <n>] [--cloud-max <0-100>]
+                                                                                                     [--low-charge-current <0-200>] [--minute <0-59>]
+                                                       [--cron-file <path>] [--device-sn <sn>] [--print-slots] [--dry-run]
 
 Global options (can also be set in $CONFIG_FILE or as env vars):
   --base-url <url>        API base URL  (DEYE_BASE_URL)
@@ -480,6 +511,18 @@ Global options (can also be set in $CONFIG_FILE or as env vars):
     --print-query           Print curl commands with sensitive headers redacted
   -h, --help              Show this help
 
+solar-charge-cron options:
+    --lat <latitude>            Location latitude (or DEYE_WEATHER_LAT)
+    --lon <longitude>           Location longitude (or DEYE_WEATHER_LON)
+    --hours <n>                 Forecast window in hours (default: DEYE_SOLAR_FORECAST_HOURS)
+    --cloud-max <0-100>         Max cloud cover to treat as "good sun" (default: DEYE_SOLAR_CLOUD_MAX)
+    --low-charge-current <n>    Value for MAX_CHARGE_CURRENT when sunny (default: DEYE_SOLAR_LOW_CHARGE_CURRENT)
+    --minute <0-59>             Cron minute for scheduled runs (default: DEYE_SOLAR_CRON_MINUTE)
+    --cron-file <path>          Output crontab-compatible file (default: DEYE_SOLAR_CRON_FILE)
+    --device-sn <sn>            Optional explicit device serial in generated commands
+    --print-slots               Print hourly weather slot table with sunny classification
+    --dry-run                   Print generated cron file content instead of writing it
+
 Examples:
   # Obtain a token
   DEYE_APP_ID=xxx DEYE_APP_SECRET=yyy DEYE_EMAIL=me@example.com \\
@@ -491,6 +534,9 @@ Examples:
   # Using a config file ($CONFIG_FILE)
   $(basename "$0") token
   $(basename "$0") config-battery
+
+    # Generate cron entries for sunny hours in next 12h near your location
+    $(basename "$0") solar-charge-cron --lat 44.0637 --lon 12.4525 --low-charge-current 20
 EOF
 }
 
@@ -887,6 +933,262 @@ cmd_device_latest() {
 }
 
 # ---------------------------------------------------------------------------
+# Command: solar-charge-cron  →  Open-Meteo forecast + cron file generation
+# ---------------------------------------------------------------------------
+cmd_solar_charge_cron() {
+    local latitude="${DEYE_WEATHER_LAT:-}"
+    local longitude="${DEYE_WEATHER_LON:-}"
+    local forecast_hours="${DEYE_SOLAR_FORECAST_HOURS:-12}"
+    local cloud_max="${DEYE_SOLAR_CLOUD_MAX:-70}"
+    local low_charge_current="${DEYE_SOLAR_LOW_CHARGE_CURRENT:-20}"
+    local cron_minute="${DEYE_SOLAR_CRON_MINUTE:-5}"
+    local cron_file="${DEYE_SOLAR_CRON_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/deyecli/solar-charge.cron}"
+    local device_sn="${DEYE_DEVICE_SN:-}"
+    local print_slots=0
+    local dry_run=0
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --lat)                 latitude="$2"; shift 2 ;;
+            --lon)                 longitude="$2"; shift 2 ;;
+            --hours)               forecast_hours="$2"; shift 2 ;;
+            --cloud-max)           cloud_max="$2"; shift 2 ;;
+            --low-charge-current)  low_charge_current="$2"; shift 2 ;;
+            --minute)              cron_minute="$2"; shift 2 ;;
+            --cron-file)           cron_file="$2"; shift 2 ;;
+            --device-sn)           device_sn="$2"; shift 2 ;;
+            --print-slots)         print_slots=1; shift ;;
+            --dry-run)             dry_run=1; shift ;;
+            --print-query)         PRINT_QUERY=1; shift ;;
+            --*)                   parse_global_args "$1" "$2"; shift 2 ;;
+            -h|--help)             usage; exit 0 ;;
+            *)
+                err "Unknown argument for solar-charge-cron: '$1'"
+                exit "$EXIT_USAGE"
+                ;;
+        esac
+    done
+
+    local missing=()
+    [[ -z "$latitude" ]]  && missing+=("--lat <latitude> or DEYE_WEATHER_LAT")
+    [[ -z "$longitude" ]] && missing+=("--lon <longitude> or DEYE_WEATHER_LON")
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        err "Missing required parameter(s):"
+        for m in "${missing[@]}"; do err "  - $m"; done
+        exit "$EXIT_USAGE"
+    fi
+
+    validate_float_range "Latitude" "$latitude" -90 90 || exit "$EXIT_USAGE"
+    validate_float_range "Longitude" "$longitude" -180 180 || exit "$EXIT_USAGE"
+    validate_positive_int "Forecast hours" "$forecast_hours" || exit "$EXIT_USAGE"
+    validate_non_negative_int "Cloud max" "$cloud_max" || exit "$EXIT_USAGE"
+    validate_non_negative_int "Cron minute" "$cron_minute" || exit "$EXIT_USAGE"
+    if (( cloud_max > 100 )); then
+        err "Cloud max must be ≤ 100, got: $cloud_max"
+        exit "$EXIT_USAGE"
+    fi
+    if (( cron_minute > 59 )); then
+        err "Cron minute must be between 0 and 59, got: $cron_minute"
+        exit "$EXIT_USAGE"
+    fi
+    if (( forecast_hours > 48 )); then
+        err "Forecast hours must be ≤ 48, got: $forecast_hours"
+        exit "$EXIT_USAGE"
+    fi
+    if ! validate_battery_param "MAX_CHARGE_CURRENT" "$low_charge_current"; then
+        exit "$EXIT_USAGE"
+    fi
+    if [[ -n "$device_sn" ]] && ! validate_device_sn "$device_sn"; then
+        exit "$EXIT_USAGE"
+    fi
+
+    require curl jq
+    if ! validate_runtime_settings; then
+        exit "$EXIT_USAGE"
+    fi
+
+    local weather_url weather_response curl_status
+    weather_url="https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&hourly=is_day,cloudcover,weathercode&forecast_hours=${forecast_hours}&timezone=auto"
+
+    echo "→ GET ${weather_url}" >&2
+
+    local max_attempts attempt delay raw http_code retry_reason should_retry
+    max_attempts=$((DEYE_RETRY_MAX + 1))
+    attempt=1
+    delay="$DEYE_RETRY_DELAY"
+    weather_response=""
+    http_code="000"
+    curl_status=0
+
+    while (( attempt <= max_attempts )); do
+        set +e
+        raw="$(deye_curl --silent --show-error \
+            --connect-timeout "$DEYE_CONNECT_TIMEOUT" \
+            --max-time "$DEYE_MAX_TIME" \
+            --url "$weather_url" \
+            --write-out $'\n%{http_code}')"
+        curl_status=$?
+        set -e
+
+        if [[ "$raw" == *$'\n'* ]]; then
+            http_code="${raw##*$'\n'}"
+            weather_response="${raw%$'\n'*}"
+        else
+            http_code="000"
+            weather_response="$raw"
+        fi
+
+        should_retry=0
+        retry_reason=""
+        if (( curl_status != 0 )); then
+            should_retry=1
+            retry_reason="network error (curl exit ${curl_status})"
+        elif [[ "$http_code" =~ ^5[0-9][0-9]$ || "$http_code" == "429" || "$http_code" == "000" ]]; then
+            should_retry=1
+            retry_reason="HTTP ${http_code}"
+        fi
+
+        if (( should_retry == 1 && attempt < max_attempts )); then
+            err "Transient weather API error: ${retry_reason}. Retry ${attempt}/${DEYE_RETRY_MAX} in ${delay}s."
+            sleep "$delay"
+            attempt=$((attempt + 1))
+            delay=$((delay * 2))
+            continue
+        fi
+
+        break
+    done
+
+    if (( curl_status != 0 )); then
+        err "Unable to fetch weather forecast (curl exit ${curl_status})."
+        exit "$EXIT_NETWORK"
+    fi
+
+    if [[ ! "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+        err "Weather API request failed (HTTP ${http_code})."
+        [[ -n "$weather_response" ]] && printf '%s\n' "$weather_response" | json_output >&2 || true
+        exit "$EXIT_API"
+    fi
+
+    if ! printf '%s' "$weather_response" | jq -e '.hourly.time and .hourly.is_day and .hourly.cloudcover and .hourly.weathercode' >/dev/null 2>&1; then
+        err "Weather API response missing expected hourly fields."
+        printf '%s\n' "$weather_response" | json_output >&2
+        exit "$EXIT_API"
+    fi
+
+    if (( print_slots == 1 )); then
+        local slot_table
+        slot_table="$(printf '%s' "$weather_response" | jq -r --argjson cloudMax "$cloud_max" '
+            .hourly as $h
+            | (["ora_locale","is_day","cloudcover_pct","weathercode","sunny_slot"] | @tsv),
+              (range(0; ($h.time|length))
+               | {
+                   t: $h.time[.],
+                   d: ($h.is_day[.] // 0),
+                   c: ($h.cloudcover[.] // 100),
+                   w: ($h.weathercode[.] // 99)
+                 }
+               | .sunny = ((.d == 1) and (.c <= $cloudMax) and (.w < 51 and .w != 45 and .w != 48))
+               | [(.t | gsub("T";" ")), (.d|tostring), (.c|tostring), (.w|tostring), (if .sunny then "SI" else "NO" end)]
+               | @tsv
+              )
+        ')"
+
+        if command -v column >/dev/null 2>&1; then
+            printf '%s\n' "$slot_table" | column -t -s $'\t'
+        else
+            printf '%s\n' "$slot_table"
+        fi
+    fi
+
+    local -a sunny_slots=()
+    mapfile -t sunny_slots < <(
+        printf '%s' "$weather_response" | jq -r --argjson cloudMax "$cloud_max" '
+            .hourly as $h
+            | range(0; ($h.time|length))
+            | {
+                time: $h.time[.],
+                is_day: ($h.is_day[.] // 0),
+                cloud: ($h.cloudcover[.] // 100),
+                code: ($h.weathercode[.] // 99)
+              }
+            | select(.is_day == 1)
+            | select(.cloud <= $cloudMax)
+            | select(.code < 51 and .code != 45 and .code != 48)
+            | .time
+        '
+    )
+
+    local script_path
+    if command -v realpath >/dev/null 2>&1; then
+        script_path="$(realpath "${BASH_SOURCE[0]}")"
+    else
+        script_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+    fi
+
+    local config_q script_q device_q
+    config_q="$(shell_quote "$CONFIG_FILE")"
+    script_q="$(shell_quote "$script_path")"
+    device_q=""
+    if [[ -n "$device_sn" ]]; then
+        device_q=" --device-sn $(shell_quote "$device_sn")"
+    fi
+
+    local generated_on
+    generated_on="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+
+    local -a cron_lines=()
+    local ts date_part time_part year month day hour key
+    declare -A seen
+    for ts in "${sunny_slots[@]}"; do
+        date_part="${ts%%T*}"
+        time_part="${ts#*T}"
+        hour="${time_part%%:*}"
+
+        IFS='-' read -r year month day <<< "$date_part"
+        month=$((10#$month))
+        day=$((10#$day))
+        hour=$((10#$hour))
+
+        key="${date_part}-${hour}"
+        [[ -n "${seen[$key]:-}" ]] && continue
+        seen[$key]=1
+
+        cron_lines+=("${cron_minute} ${hour} ${day} ${month} * [ \"\$(date +\\%Y-\\%m-\\%d)\" = \"${date_part}\" ] && DEYE_CONFIG=${config_q} ${script_q} battery-parameter-update --param-type MAX_CHARGE_CURRENT --value ${low_charge_current}${device_q} >/dev/null 2>&1")
+    done
+
+    local cron_content
+    cron_content="# deyecli solar-charge-cron generated at ${generated_on}\n"
+    cron_content+="# Location: lat=${latitude}, lon=${longitude}; forecast_hours=${forecast_hours}; cloud_max=${cloud_max}\n"
+    cron_content+="# Install: crontab $(shell_quote "$cron_file")\n"
+    cron_content+="SHELL=/bin/bash\n"
+    cron_content+="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
+
+    if (( ${#cron_lines[@]} == 0 )); then
+        cron_content+="# No sunny slots detected in next ${forecast_hours} hours.\n"
+        echo "ℹ No sunny slots detected in next ${forecast_hours} hours." >&2
+    else
+        local line
+        for line in "${cron_lines[@]}"; do
+            cron_content+="${line}\n"
+        done
+        echo "✔ Detected ${#cron_lines[@]} sunny slot(s)." >&2
+    fi
+
+    if (( dry_run == 1 )); then
+        printf '%b' "$cron_content"
+        return "$EXIT_OK"
+    fi
+
+    mkdir -p "$(dirname "$cron_file")"
+    printf '%b' "$cron_content" > "$cron_file"
+    chmod 600 "$cron_file" 2>/dev/null || true
+
+    echo "✔ Cron file generated: ${cron_file}" >&2
+    echo "  Install with: crontab $(shell_quote "$cron_file")" >&2
+}
+
+# ---------------------------------------------------------------------------
 # Main dispatcher
 # ---------------------------------------------------------------------------
 main() {
@@ -921,6 +1223,7 @@ main() {
         station-list)              cmd_station_list "$@" ;;
         station-latest)            cmd_station_latest "$@" ;;
         device-latest)             cmd_device_latest "$@" ;;
+        solar-charge-cron)         cmd_solar_charge_cron "$@" ;;
         -h|--help|help)            usage; exit 0 ;;
         *)
             err "Unknown command: '$command'"
