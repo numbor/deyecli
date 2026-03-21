@@ -1022,7 +1022,7 @@ cmd_solar_charge_cron() {
     fi
 
     local weather_url weather_response curl_status
-    weather_url="https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&hourly=is_day,cloudcover,weathercode&forecast_hours=${forecast_hours}&timezone=auto"
+    weather_url="https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&hourly=is_day,cloudcover,weathercode,direct_radiation&forecast_hours=${forecast_hours}&timezone=auto"
 
     echo "→ GET ${weather_url}" >&2
 
@@ -1084,7 +1084,7 @@ cmd_solar_charge_cron() {
         exit "$EXIT_API"
     fi
 
-    if ! printf '%s' "$weather_response" | jq -e '.hourly.time and .hourly.is_day and .hourly.cloudcover and .hourly.weathercode' >/dev/null 2>&1; then
+    if ! printf '%s' "$weather_response" | jq -e '.hourly.time and .hourly.is_day and .hourly.cloudcover and .hourly.weathercode and .hourly.direct_radiation' >/dev/null 2>&1; then
         err "Weather API response missing expected hourly fields."
         printf '%s\n' "$weather_response" | json_output >&2
         exit "$EXIT_API"
@@ -1093,17 +1093,44 @@ cmd_solar_charge_cron() {
     if (( print_slots == 1 )); then
         local slot_table
         slot_table="$(printf '%s' "$weather_response" | jq -r --argjson cloudMax "$cloud_max" '
+            def weathercode_desc:
+              if . == 0 then "Cielo sereno"
+              elif . == 1 then "Prevalentemente sereno"
+              elif . == 2 then "Parzialmente nuvoloso"
+              elif . == 3 then "Coperto"
+              elif . == 45 or . == 48 then "Nebbia"
+              elif . == 51 then "Pioggia leggera"
+              elif . == 53 then "Pioggia moderata"
+              elif . == 55 then "Pioggia forte"
+              elif . == 61 then "Pioggia leggera"
+              elif . == 63 then "Pioggia moderata"
+              elif . == 65 then "Pioggia forte"
+              elif . == 71 then "Neve leggera"
+              elif . == 73 then "Neve moderata"
+              elif . == 75 then "Neve forte"
+              elif . == 77 then "Granuli di neve"
+              elif . == 80 then "Rrosciacchi leggeri"
+              elif . == 81 then "Rovesci moderati"
+              elif . == 82 then "Rovesci forti"
+              elif . == 85 then "Rovesci di neve leggeri"
+              elif . == 86 then "Rovesci di neve forti"
+              elif . == 95 then "Temporale"
+              elif . == 96 then "Temporale con grandine"
+              elif . == 99 then "Temporale con grandine forte"
+              else "Sconosciuto"
+              end;
             .hourly as $h
-            | (["ora_locale","is_day","cloudcover_pct","weathercode","sunny_slot"] | @tsv),
+            | (["ora_locale","is_day","cloudcover_pct","weathercode","descrizione","direct_rad_w/m2","sunny_slot"] | @tsv),
               (range(0; ($h.time|length))
                | {
                    t: $h.time[.],
                    d: ($h.is_day[.] // 0),
                    c: ($h.cloudcover[.] // 100),
-                   w: ($h.weathercode[.] // 99)
+                   w: ($h.weathercode[.] // 99),
+                   r: ($h.direct_radiation[.] // 0)
                  }
                | .sunny = ((.d == 1) and (.c <= $cloudMax) and (.w < 51 and .w != 45 and .w != 48))
-               | [(.t | gsub("T";" ")), (.d|tostring), (.c|tostring), (.w|tostring), (if .sunny then "SI" else "NO" end)]
+               | [(.t | gsub("T";" ")), (.d|tostring), (.c|tostring), (.w|tostring), (.w | weathercode_desc), (.r|tostring), (if .sunny then "SI" else "NO" end)]
                | @tsv
               )
         ')"
