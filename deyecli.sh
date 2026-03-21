@@ -30,6 +30,7 @@ DEYE_WEATHER_LAT="${DEYE_WEATHER_LAT:-}"           # latitude for weather foreca
 DEYE_WEATHER_LON="${DEYE_WEATHER_LON:-}"           # longitude for weather forecast
 DEYE_SOLAR_FORECAST_HOURS="${DEYE_SOLAR_FORECAST_HOURS:-12}"  # lookahead window
 DEYE_SOLAR_CLOUD_MAX="${DEYE_SOLAR_CLOUD_MAX:-70}"            # max cloud cover (%)
+DEYE_SOLAR_MIN_RADIATION="${DEYE_SOLAR_MIN_RADIATION:-200}"    # min direct radiation (W/m²) for sunny slot
 DEYE_SOLAR_LOW_CHARGE_CURRENT="${DEYE_SOLAR_LOW_CHARGE_CURRENT:-20}"  # target MAX_CHARGE_CURRENT
 DEYE_SOLAR_DEFAULT_CHARGE_CURRENT="${DEYE_SOLAR_DEFAULT_CHARGE_CURRENT:-}"  # restore value, used only when restore option is enabled
 DEYE_SOLAR_CRON_MINUTE="${DEYE_SOLAR_CRON_MINUTE:-5}"                # minute within selected hours
@@ -469,6 +470,7 @@ Usage: $(basename "$0") <command> [options]
 
 Commands:
   token           Obtain an access token          (POST /v1.0/account/token)
+  show-config     Show all configuration parameters and environment variables
   config-battery  Read battery config parameters  (POST /v1.0/config/battery)
                   Usage: config-battery [--device-sn <sn>] [<sn>]
   config-system              Read system work mode parameters  (POST /v1.0/config/system)
@@ -488,7 +490,7 @@ Commands:
   device-latest              Fetch latest raw measure-point data of a device (POST /v1.0/device/latest)
                              Usage: device-latest [--device-sn <sn>] [<sn>]
     solar-charge-cron          Build a crontab-compatible file to slow battery charge when sunny
-                                                         Usage: solar-charge-cron --lat <lat> --lon <lon> [--hours <n>] [--cloud-max <0-100>]
+                                                         Usage: solar-charge-cron --lat <lat> --lon <lon> [--hours <n>] [--cloud-max <0-100>] [--min-radiation <w/m2>]
                                                                                                        [--low-charge-current <0-200>] [--restore-default-charge-current]
                                                                                                        [--default-charge-current <0-200>] [--minute <0-59>]
                                                        [--cron-file <path>] [--device-sn <sn>] [--print-slots] [--dry-run]
@@ -518,6 +520,7 @@ solar-charge-cron options:
     --lon <longitude>           Location longitude (or DEYE_WEATHER_LON)
     --hours <n>                 Forecast window in hours (default: DEYE_SOLAR_FORECAST_HOURS)
     --cloud-max <0-100>         Max cloud cover to treat as "good sun" (default: DEYE_SOLAR_CLOUD_MAX)
+    --min-radiation <w/m2>      Min direct radiation for sunny slot in W/m² (default: DEYE_SOLAR_MIN_RADIATION)
     --low-charge-current <n>    Value for MAX_CHARGE_CURRENT when sunny (default: DEYE_SOLAR_LOW_CHARGE_CURRENT)
     --restore-default-charge-current
                                                              Add a final cron line to restore MAX_CHARGE_CURRENT after the last sunny slot
@@ -949,11 +952,13 @@ cmd_solar_charge_cron() {
     local cloud_max="${DEYE_SOLAR_CLOUD_MAX:-70}"
     local low_charge_current="${DEYE_SOLAR_LOW_CHARGE_CURRENT:-20}"
     local default_charge_current="${DEYE_SOLAR_DEFAULT_CHARGE_CURRENT:-}"
+    local min_radiation="${DEYE_SOLAR_MIN_RADIATION:-200}"
     local cron_minute="${DEYE_SOLAR_CRON_MINUTE:-5}"
     local cron_file="${DEYE_SOLAR_CRON_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/deyecli/solar-charge.cron}"
     local device_sn="${DEYE_DEVICE_SN:-}"
     local restore_default=0
     local print_slots=0
+    local show_config=0
     local dry_run=0
 
     while [[ $# -gt 0 ]]; do
@@ -962,6 +967,7 @@ cmd_solar_charge_cron() {
             --lon)                 longitude="$2"; shift 2 ;;
             --hours)               forecast_hours="$2"; shift 2 ;;
             --cloud-max)           cloud_max="$2"; shift 2 ;;
+            --min-radiation)       min_radiation="$2"; shift 2 ;;
             --low-charge-current)  low_charge_current="$2"; shift 2 ;;
             --restore-default-charge-current) restore_default=1; shift ;;
             --default-charge-current) default_charge_current="$2"; restore_default=1; shift 2 ;;
@@ -969,6 +975,7 @@ cmd_solar_charge_cron() {
             --cron-file)           cron_file="$2"; shift 2 ;;
             --device-sn)           device_sn="$2"; shift 2 ;;
             --print-slots)         print_slots=1; shift ;;
+            --show-config)         show_config=1; shift ;;
             --dry-run)             dry_run=1; shift ;;
             --print-query)         PRINT_QUERY=1; shift ;;
             --*)                   parse_global_args "$1" "$2"; shift 2 ;;
@@ -987,6 +994,27 @@ cmd_solar_charge_cron() {
         err "Missing required parameter(s):"
         for m in "${missing[@]}"; do err "  - $m"; done
         exit "$EXIT_USAGE"
+    fi
+
+    if (( show_config == 1 )); then
+        cat >&2 <<'CONFIG_SHOW'
+================================================================================
+              Current solar-charge-cron Configuration
+================================================================================
+CONFIG_SHOW
+        printf "  DEYE_WEATHER_LAT           = %s\n" "${latitude}" >&2
+        printf "  DEYE_WEATHER_LON           = %s\n" "${longitude}" >&2
+        printf "  DEYE_SOLAR_FORECAST_HOURS  = %s hours\n" "${forecast_hours}" >&2
+        printf "  DEYE_SOLAR_CLOUD_MAX       = %s %%\n" "${cloud_max}" >&2
+        printf "  DEYE_SOLAR_MIN_RADIATION   = %s W/m²\n" "${min_radiation}" >&2
+        printf "  DEYE_SOLAR_LOW_CHARGE_CURRENT    = %s A\n" "${low_charge_current}" >&2
+        printf "  DEYE_SOLAR_DEFAULT_CHARGE_CURRENT = %s\n" "${default_charge_current:-auto-detect}" >&2
+        printf "  DEYE_SOLAR_CRON_MINUTE    = %s\n" "${cron_minute}" >&2
+        printf "  DEYE_SOLAR_CRON_FILE      = %s\n" "${cron_file}" >&2
+        printf "  DEYE_DEVICE_SN            = %s\n" "${device_sn:-not set}" >&2
+        cat >&2 <<'CONFIG_SHOW'
+================================================================================
+CONFIG_SHOW
     fi
 
     validate_float_range "Latitude" "$latitude" -90 90 || exit "$EXIT_USAGE"
@@ -1092,7 +1120,7 @@ cmd_solar_charge_cron() {
 
     if (( print_slots == 1 )); then
         local slot_table
-        slot_table="$(printf '%s' "$weather_response" | jq -r --argjson cloudMax "$cloud_max" '
+        slot_table="$(printf '%s' "$weather_response" | jq -r --argjson minRad "$min_radiation" '
             def weathercode_desc:
               if . == 0 then "Cielo sereno"
               elif . == 1 then "Prevalentemente sereno"
@@ -1129,7 +1157,7 @@ cmd_solar_charge_cron() {
                    w: ($h.weathercode[.] // 99),
                    r: ($h.direct_radiation[.] // 0)
                  }
-               | .sunny = ((.d == 1) and (.c <= $cloudMax) and (.w < 51 and .w != 45 and .w != 48))
+               | .sunny = ((.d == 1) and (.r > $minRad) and (.w < 51 and .w != 45 and .w != 48))
                | [(.t | gsub("T";" ")), (.d|tostring), (.c|tostring), (.w|tostring), (.w | weathercode_desc), (.r|tostring), (if .sunny then "SI" else "NO" end)]
                | @tsv
               )
@@ -1144,17 +1172,17 @@ cmd_solar_charge_cron() {
 
     local -a sunny_slots=()
     mapfile -t sunny_slots < <(
-        printf '%s' "$weather_response" | jq -r --argjson cloudMax "$cloud_max" '
+        printf '%s' "$weather_response" | jq -r --argjson minRad "$min_radiation" '
             .hourly as $h
             | range(0; ($h.time|length))
             | {
                 time: $h.time[.],
                 is_day: ($h.is_day[.] // 0),
-                cloud: ($h.cloudcover[.] // 100),
+                radiation: ($h.direct_radiation[.] // 0),
                 code: ($h.weathercode[.] // 99)
               }
             | select(.is_day == 1)
-            | select(.cloud <= $cloudMax)
+            | select(.radiation > $minRad)
             | select(.code < 51 and .code != 45 and .code != 48)
             | .time
         '
@@ -1288,6 +1316,189 @@ cmd_solar_charge_cron() {
     echo "  Install with: crontab $(shell_quote "$cron_file")" >&2
 }
 
+# Function to display all configuration parameters
+cmd_show_config() {
+    cat <<'CONFIG_EOF'
+================================================================================
+                     DEYECLI Configuration Parameters
+================================================================================
+
+GLOBAL/AUTHENTICATION PARAMETERS:
+
+  DEYE_BASE_URL
+    CLI:        --base-url <url>
+    Default:    https://eu1-developer.deyecloud.com
+    This is the base URL for the Deye Cloud API endpoint.
+
+  DEYE_APP_ID
+    CLI:        --app-id <id>
+    Default:    (empty)
+    Your application ID from Deye Cloud developer portal.
+
+  DEYE_APP_SECRET
+    CLI:        --app-secret <secret>
+    Default:    (empty)
+    Your application secret from Deye Cloud developer portal.
+
+  DEYE_EMAIL
+    CLI:        --email <email>
+    Default:    (empty)
+    Email address for login (used with password).
+
+  DEYE_USERNAME
+    CLI:        --username <name>
+    Default:    (empty)
+    Username for login alternative to email.
+
+  DEYE_MOBILE
+    CLI:        --mobile <number>
+    Default:    (empty)
+    Mobile number for login.
+
+  DEYE_COUNTRY_CODE
+    CLI:        --country-code <code>
+    Default:    (empty)
+    Country code for mobile login (e.g., +39 for Italy).
+
+  DEYE_PASSWORD
+    CLI:        --password <pass>
+    Default:    (empty)
+    Plaintext password - will be SHA-256 hashed. DO NOT store in config file!
+
+  DEYE_COMPANY_ID
+    CLI:        --company-id <id>
+    Default:    (empty)
+    Company ID for business accounts.
+
+  DEYE_TOKEN
+    CLI:        --token <bearer>
+    Default:    (empty)
+    Bearer token from /token endpoint for authentication.
+
+================================================================================
+
+DEVICE/STATION PARAMETERS:
+
+  DEYE_DEVICE_SN
+    CLI:        --device-sn <sn>
+    Default:    (empty)
+    Device serial number for device operations.
+
+  DEYE_STATION_ID
+    CLI:        --station-id <id>
+    Default:    (empty)
+    Station ID (integer) for station operations.
+
+================================================================================
+
+NETWORK/RETRY PARAMETERS:
+
+  DEYE_CONNECT_TIMEOUT
+    CLI:        --connect-timeout <s>
+    Default:    10 (seconds)
+    Connection timeout for API requests.
+
+  DEYE_MAX_TIME
+    CLI:        --max-time <s>
+    Default:    30 (seconds)
+    Maximum time for API requests.
+
+  DEYE_RETRY_MAX
+    CLI:        --retry-max <n>
+    Default:    2 (retries)
+    Maximum number of retries for transient failures.
+
+  DEYE_RETRY_DELAY
+    CLI:        --retry-delay <s>
+    Default:    1 (second)
+    Initial retry delay in seconds (doubles on each retry).
+
+  DEYE_PRINT_QUERY
+    CLI:        --print-query
+    Default:    false
+    Print curl commands with sensitive headers redacted (useful for debugging).
+
+================================================================================
+
+WEATHER/SOLAR FORECAST PARAMETERS:
+
+  DEYE_WEATHER_LAT
+    CLI:        --lat <latitude>
+    Default:    (empty)
+    Latitude for weather forecast (required for solar-charge-cron command).
+
+  DEYE_WEATHER_LON
+    CLI:        --lon <longitude>
+    Default:    (empty)
+    Longitude for weather forecast (required for solar-charge-cron command).
+
+================================================================================
+
+SOLAR CHARGE PARAMETERS:
+
+  DEYE_SOLAR_FORECAST_HOURS
+    CLI:        --hours <n>
+    Default:    12 (hours)
+    Forecast window lookahead for solar charging optimization.
+
+  DEYE_SOLAR_CLOUD_MAX
+    CLI:        --cloud-max <0-100>
+    Default:    70 (%)
+    Maximum cloud cover percentage to treat as viable for solar charging.
+    NOTE: This parameter is currently deprecated (not used when direct_radiation is available).
+
+  DEYE_SOLAR_MIN_RADIATION
+    CLI:        --min-radiation <w/m2>
+    Default:    200 (W/m²)
+    Minimum direct radiation threshold to consider a slot as sunny.
+    Only sunny slots are used to generate cron entries for charge current reduction.
+
+  DEYE_SOLAR_LOW_CHARGE_CURRENT
+    CLI:        --low-charge-current <0-200>
+    Default:    20 (A)
+    Target battery charge current when sunny (used in cron commands).
+
+  DEYE_SOLAR_DEFAULT_CHARGE_CURRENT
+    CLI:        --default-charge-current <0-200>
+    Default:    (empty - auto-detected)
+    Battery charge current to restore after the last sunny slot.
+    Only used when --restore-default-charge-current is enabled.
+
+  DEYE_SOLAR_CRON_MINUTE
+    CLI:        --minute <0-59>
+    Default:    5
+    Minute (0-59) within selected hours for cron job execution.
+
+  DEYE_SOLAR_CRON_FILE
+    CLI:        --cron-file <path>
+    Default:    \${XDG_CONFIG_HOME:-\$HOME/.config}/deyecli/solar-charge.cron
+    Output path for crontab-compatible file generated by solar-charge-cron.
+
+================================================================================
+
+CONFIGURATION FILE:
+
+  All parameters can be set in a configuration file:
+    File location: \${XDG_CONFIG_HOME:-\$HOME/.config}/deyecli/config
+    Custom location: DEYE_CONFIG=/path/to/config ./deyecli.sh <command>
+
+  Configuration file format (shell variables):
+    DEYE_APP_ID="your-app-id"
+    DEYE_APP_SECRET="your-app-secret"
+    DEYE_EMAIL="your-email@example.com"
+    DEYE_TOKEN="bearer-token-xxx"
+    DEYE_WEATHER_LAT="44.0637"
+    DEYE_WEATHER_LON="12.4525"
+    DEYE_SOLAR_MIN_RADIATION="250"
+    DEYE_SOLAR_LOW_CHARGE_CURRENT="25"
+    etc.
+
+  CLI arguments override config file settings, which override environment variables.
+
+================================================================================
+CONFIG_EOF
+}
+
 # ---------------------------------------------------------------------------
 # Main dispatcher
 # ---------------------------------------------------------------------------
@@ -1317,6 +1528,7 @@ main() {
 
     case "$command" in
         token)          cmd_token "$@" ;;
+        show-config)    cmd_show_config "$@" ;;
         config-battery)            cmd_config_battery "$@" ;;
         config-system)             cmd_config_system "$@" ;;
         battery-parameter-update)  cmd_battery_parameter_update "$@" ;;
