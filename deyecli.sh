@@ -489,11 +489,14 @@ Commands:
                              Usage: station-latest [--station-id <id>] [<id>]
   device-latest              Fetch latest raw measure-point data of a device (POST /v1.0/device/latest)
                              Usage: device-latest [--device-sn <sn>] [<sn>]
-    solar-charge-cron          Build a crontab-compatible file to slow battery charge when sunny
-                                                         Usage: solar-charge-cron --lat <lat> --lon <lon> [--hours <n>] [--cloud-max <0-100>] [--min-radiation <w/m2>]
-                                                                                                       [--low-charge-current <0-200>] [--restore-default-charge-current]
-                                                                                                       [--default-charge-current <0-200>] [--minute <0-59>]
-                                                       [--cron-file <path>] [--device-sn <sn>] [--print-slots] [--dry-run]
+  solar-charge-cron          Build a crontab-compatible file to slow battery charge when sunny
+                             Usage: solar-charge-cron --lat <lat> --lon <lon> [--hours <n>] [--cloud-max <0-100>] [--min-radiation <w/m2>]
+                                                      [--low-charge-current <0-200>] [--restore-default-charge-current]
+                                                      [--default-charge-current <0-200>] [--minute <0-59>]
+                                                      [--cron-file <path>] [--device-sn <sn>] [--print-slots] [--dry-run]
+  api                        Start HTTP API server to expose commands via REST endpoints
+                             Usage: api [--host <addr>] [--port <port>] [--api-script <path>]
+                             Useful for remote integration with Home Assistant and other platforms
 
 Global options (can also be set in $CONFIG_FILE or as env vars):
   --base-url <url>        API base URL  (DEYE_BASE_URL)
@@ -514,6 +517,11 @@ Global options (can also be set in $CONFIG_FILE or as env vars):
     --retry-delay <s>       Initial retry delay in seconds (DEYE_RETRY_DELAY)
     --print-query           Print curl commands with sensitive headers redacted
   -h, --help              Show this help
+
+api options:
+  --host <address>        Bind address for HTTP server (default: 0.0.0.0)
+  --port <port>           Listen port for HTTP server (default: 8000)
+  --api-script <path>     Path to api_server.py script (default: ./api_server.py)
 
 solar-charge-cron options:
     --lat <latitude>            Location latitude (or DEYE_WEATHER_LAT)
@@ -1316,6 +1324,56 @@ CONFIG_SHOW
     echo "  Install with: crontab $(shell_quote "$cron_file")" >&2
 }
 
+# ---------------------------------------------------------------------------
+# Command: api  →  Start HTTP API server
+# ---------------------------------------------------------------------------
+cmd_api() {
+    parse_global_args "$@"
+
+    local host="0.0.0.0"
+    local port=8000
+    local api_script="./api_server.py"
+
+    # Parse API-specific arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --host)         host="$2";           shift 2 ;;
+            --port)         port="$2";           shift 2 ;;
+            --api-script)   api_script="$2";    shift 2 ;;
+            -*)             err "Unknown option: $1"; return "$EXIT_USAGE" ;;
+            *)              shift ;;
+        esac
+    done
+
+    # Validate port is a number
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+        err "Port must be a number between 1 and 65535, got: $port"
+        return "$EXIT_USAGE"
+    fi
+
+    # Check if api_server.py exists
+    if [[ ! -f "$api_script" ]]; then
+        err "API server script not found: $api_script"
+        return "$EXIT_DEP"
+    fi
+
+    # Require Python 3
+    require python3
+
+    # Start the API server
+    echo "Starting Deye API server on http://${host}:${port}" >&2
+    echo "Configuration:" >&2
+    echo "  - Host: $host" >&2
+    echo "  - Port: $port" >&2
+    echo "  - Script: $api_script" >&2
+    echo "" >&2
+    echo "Ctrl+C to stop" >&2
+    echo "" >&2
+
+    # Pass environment variables to the Python server
+    python3 "$api_script" --host "$host" --port "$port" --cli ./deyecli.sh
+}
+
 # Function to display all configuration parameters
 cmd_show_config() {
     cat <<'CONFIG_EOF'
@@ -1536,6 +1594,7 @@ main() {
         station-latest)            cmd_station_latest "$@" ;;
         device-latest)             cmd_device_latest "$@" ;;
         solar-charge-cron)         cmd_solar_charge_cron "$@" ;;
+        api)                       cmd_api "$@" ;;
         -h|--help|help)            usage; exit 0 ;;
         *)
             err "Unknown command: '$command'"

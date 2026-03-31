@@ -1,0 +1,288 @@
+# Home Assistant Integration Example
+# 
+# This file shows how to integrate the Deye API server with Home Assistant
+# Copy the relevant sections to your Home Assistant configuration.yaml
+#
+# Prerequisites:
+# 1. Deye API server running: ./deyecli.sh api --host 0.0.0.0 --port 8000
+# 2. Bearer token obtained: ./deyecli.sh token
+# 3. Device SN and Station ID known
+
+# ==============================================================================
+# 1. INPUT HELPERS - Store sensitive information securely
+# ==============================================================================
+# Create these via UI: Settings > Devices & Services > Helper
+# Or add to configuration.yaml:
+
+input_text:
+  deye_token:
+    name: Deye API Token
+    mode: password
+    icon: mdi:key
+
+  deye_api_host:
+    name: Deye API Host
+    mode: text
+    initial: "localhost:8000"
+    icon: mdi:server
+
+  deye_device_sn:
+    name: Deye Device Serial Number
+    mode: text
+    icon: mdi:identifier
+
+  deye_station_id:
+    name: Deye Station ID
+    mode: text
+    icon: mdi:lightning-bolt
+
+# ==============================================================================
+# 2. REST COMMANDS - Define API calls to Deye server
+# ==============================================================================
+
+rest_command:
+  # Get latest station data (real-time)
+  deye_get_station_latest:
+    url: "http://{{ state_attr('input_text.deye_api_host', 'value') }}/api/station/latest"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ states('input_text.deye_token') }}"
+      Content-Type: "application/json"
+    payload: '{"station_id": "{{ states(''input_text.deye_station_id'') }}"}'
+
+  # Get device latest data
+  deye_get_device_latest:
+    url: "http://{{ state_attr('input_text.deye_api_host', 'value') }}/api/device/latest"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ states('input_text.deye_token') }}"
+      Content-Type: "application/json"
+    payload: '{"device_sn": "{{ states(''input_text.deye_device_sn'') }}"}'
+
+  # Get battery config
+  deye_get_battery_config:
+    url: "http://{{ state_attr('input_text.deye_api_host', 'value') }}/api/config/battery"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ states('input_text.deye_token') }}"
+      Content-Type: "application/json"
+    payload: '{"device_sn": "{{ states(''input_text.deye_device_sn'') }}"}'
+
+  # Set battery charge current
+  deye_set_charge_current:
+    url: "http://{{ state_attr('input_text.deye_api_host', 'value') }}/api/battery/parameter/update"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ states('input_text.deye_token') }}"
+      Content-Type: "application/json"
+    payload: '{"param_type": "MAX_CHARGE_CURRENT", "value": "{{ charge_current }}", "device_sn": "{{ states(''input_text.deye_device_sn'') }}"}'
+
+  # Set battery discharge current
+  deye_set_discharge_current:
+    url: "http://{{ state_attr('input_text.deye_api_host', 'value') }}/api/battery/parameter/update"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ states('input_text.deye_token') }}"
+      Content-Type: "application/json"
+    payload: '{"param_type": "MAX_DISCHARGE_CURRENT", "value": "{{ discharge_current }}", "device_sn": "{{ states(''input_text.deye_device_sn'') }}"}'
+
+# ==============================================================================
+# 3. TEMPLATE SENSORS - Parse API responses into Home Assistant sensors
+# ==============================================================================
+
+template:
+  - trigger:
+      - platform: homeassistant
+        event: start
+      - platform: time_pattern
+        minutes: "/5"  # Update every 5 minutes
+    action:
+      - service: rest_command.deye_get_station_latest
+      - service: rest_command.deye_get_device_latest
+      - service: rest_command.deye_get_battery_config
+    sensor:
+      - name: "Battery SOC"
+        unit_of_measurement: "%"
+        state: "{{ states('sensor.battery_power_raw') | string }}"  # Will be updated via automation
+
+      - name: "Battery Power"
+        unit_of_measurement: "W"
+        state: "{{ states('sensor.battery_power_raw') | string }}"
+
+      - name: "Generation Power"
+        unit_of_measurement: "W"
+        state: "{{ states('sensor.generation_power_raw') | string }}"
+
+      - name: "Grid Power"
+        unit_of_measurement: "W"
+        state: "{{ states('sensor.grid_power_raw') | string }}"
+
+# ==============================================================================
+# 4. AUTOMATIONS - Periodically fetch and update data
+# ==============================================================================
+
+automation:
+  # Fetch station data every 5 minutes
+  - alias: "Deye: Fetch station data"
+    trigger:
+      platform: time_pattern
+      minutes: "/5"
+    action:
+      - service: rest_command.deye_get_station_latest
+
+  # Fetch device data every 10 minutes
+  - alias: "Deye: Fetch device data"
+    trigger:
+      platform: time_pattern
+      minutes: "/10"
+    action:
+      - service: rest_command.deye_get_device_latest
+
+  # Fetch battery config every hour
+  - alias: "Deye: Fetch battery config"
+    trigger:
+      platform: time_pattern
+      hours: "*"
+      minutes: 0
+    action:
+      - service: rest_command.deye_get_battery_config
+
+  # Example: Reduce charge current when battery is charging and SOC is above 80%
+  - alias: "Deye: Solar - Reduce charge when sunny (example)"
+    trigger:
+      platform: time
+      at: "10:00:00"
+    action:
+      - service: rest_command.deye_set_charge_current
+        data:
+          charge_current: "30"  # Reduce to 30A when sunny
+    condition:
+      condition: or
+      conditions:
+        - condition: state
+          entity_id: sensor.battery_soc
+          state: "{{ (state | int) > 80 }}"
+
+  # Example: Restore normal charge current in the evening
+  - alias: "Deye: Solar - Restore charge current"
+    trigger:
+      platform: time
+      at: "17:00:00"
+    action:
+      - service: rest_command.deye_set_charge_current
+        data:
+          charge_current: "100"  # Restore to 100A
+
+  # Alert if battery discharge is high
+  - alias: "Deye: Alert on high discharge"
+    trigger:
+      platform: template
+      value_template: "{{ states('sensor.battery_power') | int < -2000 }}"
+    action:
+      - service: persistent_notification.create
+        data:
+          title: "High Battery Discharge"
+          message: "Battery discharge: {{ states('sensor.battery_power') }} W"
+          notification_id: "deye_high_discharge"
+
+# ==============================================================================
+# 5. SCRIPTS - Manual control scripts
+# ==============================================================================
+
+script:
+  deye_charge_battery:
+    description: "Set battery to charge at X amperes"
+    fields:
+      charge_current:
+        description: "Charge current in amperes (0-200)"
+        example: 50
+    sequence:
+      - service: rest_command.deye_set_charge_current
+        data:
+          charge_current: "{{ charge_current }}"
+
+  deye_discharge_battery:
+    description: "Set battery to discharge at X amperes"
+    fields:
+      discharge_current:
+        description: "Discharge current in amperes (0-200)"
+        example: 100
+    sequence:
+      - service: rest_command.deye_set_discharge_current
+        data:
+          discharge_current: "{{ discharge_current }}"
+
+# ==============================================================================
+# 6. LOVELACE UI CARD EXAMPLE (via YAML mode)
+# ==============================================================================
+# 
+# type: vertical-stack
+# cards:
+#   - type: entities
+#     title: Deye Solar System
+#     entities:
+#       - entity: sensor.battery_soc
+#         name: Battery SOC
+#       - entity: sensor.battery_power
+#         name: Battery Power
+#       - entity: sensor.generation_power
+#         name: Generation Power
+#       - entity: sensor.grid_power
+#         name: Grid Power
+# 
+#   - type: gauge
+#     entity: sensor.battery_soc
+#     min: 0
+#     max: 100
+#     name: Battery State
+# 
+#   - type: custom:button-card
+#     entity: script.deye_charge_battery
+#     name: Charge Battery
+#     tap_action:
+#       action: call-service
+#       service: script.deye_charge_battery
+#       service_data:
+#         charge_current: 50
+
+# ==============================================================================
+# 7. PROMETHEUS/GRAFANA METRICS (Optional, via curl in automation)
+# ==============================================================================
+# If you want to export metrics to Prometheus for Grafana visualization,
+# you can add this to your automation:
+#
+# - alias: "Export metrics to Prometheus"
+#   trigger:
+#     platform: time_pattern
+#     minutes: "/5"
+#   action:
+#     - service: shell_command.export_to_prometheus
+#
+# And in shell_command:
+#   export_to_prometheus: |
+#     curl -s http://localhost:8000/api/station/latest \
+#       -H "Authorization: Bearer $(cat ~/.config/deyecli/config | grep DEYE_TOKEN)" \
+#       -d '{"station_id": "YOUR_STATION_ID"}' | \
+#       jq '.data | to_entries[] | "\(.key){instance=\"deye\"} \(.value)"' >> /tmp/deye_metrics.prom
+
+# ==============================================================================
+# USAGE NOTES:
+# ==============================================================================
+#
+# 1. Set the input_text helpers with your actual values:
+#    - input_text.deye_token: Your bearer token from "deyecli.sh token"
+#    - input_text.deye_api_host: Your server host:port (e.g., 192.168.1.100:8000)
+#    - input_text.deye_device_sn: Your device serial number
+#    - input_text.deye_station_id: Your station ID
+#
+# 2. Verify the API server is running and accessible:
+#    curl -H "Authorization: Bearer YOUR_TOKEN" http://localhost:8000/api/station/list
+#
+# 3. Check Home Assistant logs for any errors:
+#    Settings > System > Logs (or journalctl -u home-assistant -f)
+#
+# 4. For debugging REST commands:
+#    - Developer Tools > States: Check if entities are created
+#    - Developer Tools > Services: Manually call rest_command.deye_get_station_latest
+#
+# 5. Adjust update frequency as needed (every 5 min, 10 min, etc.)
