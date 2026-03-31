@@ -1273,20 +1273,22 @@ def main():
         epilog='''
 Examples:
   # Obtain a token
-  deye_cli.py token --app-id xxx --app-secret yyy --email me@example.com --password mypass
+  deyecli.py token --app-id xxx --app-secret yyy --email me@example.com --password mypass
 
   # Read battery config
-  deye_cli.py config-battery DEVICE_SN
+  deyecli.py config-battery DEVICE_SN
 
   # List stations
-  deye_cli.py station-list
+  deyecli.py station-list
 
   # Generate solar charge cron
-  deye_cli.py solar-charge-cron --lat 44.0637 --lon 12.4525
+  deyecli.py solar-charge-cron --lat 44.0637 --lon 12.4525
 
   # Start API server
-  deye_cli.py api --host 0.0.0.0 --port 8000
+  deyecli.py api --host 0.0.0.0 --port 8000
         '''
+    ,
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     
     # Global options
