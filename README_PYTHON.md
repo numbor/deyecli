@@ -1,20 +1,19 @@
-# Deye CLI - Python Implementation
+# Deye CLI - Python
 
 ## Overview
 
-`deye_cli.py` è una traduzione completa da bash a Python del progetto deyecli che integra anche le funzionalità del server API HTTP.
+`deyecli.py` è il programma principale per interagire con le API Deye Cloud, con server HTTP REST integrato.
 
 ### Caratteristiche principali
 
-✅ **Traduzione completa da Bash a Python**
-- Tutti i comandi dello script bash `deyecli.sh` sono disponibili
-- Stessi parametri e opzioni
-- Compatibilità con il file di configurazione
+✅ **Tutti i comandi Deye Cloud**
+- Token, config batteria, config sistema, aggiornamento parametri
+- Lista stazioni e dati real-time
+- Nessun `jq`, `curl` o `bash` richiesto
 
 ✅ **Server API HTTP integrato**
 - Endpoints REST per tutti i comandi
 - Supporto autenticazione Bearer token
-- CORS enabled
 - Configurazione porta e indirizzo
 
 ✅ **Gestione configurazione avanzata**
@@ -34,7 +33,7 @@
 
 ```bash
 # Rendere eseguibile
-chmod +x deye_cli.py
+chmod +x deyecli.py
 
 # Installare dipendenze opzionali (consigliato)
 pip install requests
@@ -47,7 +46,7 @@ pip install requests
 #### 1. Ottenere token di accesso
 
 ```bash
-./deye_cli.py token \
+./deyecli.py token \
   --app-id YOUR_APP_ID \
   --app-secret YOUR_APP_SECRET \
   --email your@email.com \
@@ -59,19 +58,19 @@ Token viene salvato automaticamente in: `~/.config/deyecli/config`
 #### 2. Leggere configurazione batteria
 
 ```bash
-./deye_cli.py config-battery DEVICE_SN
+./deyecli.py config-battery DEVICE_SN
 ```
 
 #### 3. Leggere configurazione sistema
 
 ```bash
-./deye_cli.py config-system DEVICE_SN
+./deyecli.py config-system DEVICE_SN
 ```
 
 #### 4. Aggiornare parametri batteria
 
 ```bash
-./deye_cli.py battery-parameter-update \
+./deyecli.py battery-parameter-update \
   --param-type MAX_CHARGE_CURRENT \
   --value 20 \
   --device-sn DEVICE_SN
@@ -86,25 +85,25 @@ Parametri supportati:
 #### 5. Listare stazioni
 
 ```bash
-./deye_cli.py station-list
+./deyecli.py station-list
 ```
 
 #### 6. Ottenere dati recenti stazione
 
 ```bash
-./deye_cli.py station-latest STATION_ID
+./deyecli.py station-latest STATION_ID
 ```
 
 #### 7. Ottenere dati recenti dispositivo
 
 ```bash
-./deye_cli.py device-latest DEVICE_SN
+./deyecli.py device-latest DEVICE_SN
 ```
 
 #### 8. Generare cron per carica solare
 
 ```bash
-./deye_cli.py solar-charge-cron \
+./deyecli.py solar-charge-cron \
   --lat 44.0637 \
   --lon 12.4525 \
   --hours 12 \
@@ -126,19 +125,19 @@ Opzioni:
 #### 9. Mostrare configurazione
 
 ```bash
-./deye_cli.py show-config
+./deyecli.py show-config
 ```
 
 #### 10. Avviare server API HTTP
 
 ```bash
-./deye_cli.py api --host 0.0.0.0 --port 8000
+./deyecli.py api --host 0.0.0.0 --port 8000
 ```
 
 ### Opzioni globali
 
 ```bash
-./deye_cli.py [OPZIONI_GLOBALI] <comando> [OPZIONI_COMANDO]
+./deyecli.py [OPZIONI_GLOBALI] <comando> [OPZIONI_COMANDO]
 ```
 
 Opzioni globali disponibili:
@@ -181,7 +180,7 @@ Tutte le impostazioni supportano variabili d'ambiente prefixate con `DEYE_`:
 ```bash
 export DEYE_APP_ID="xxx"
 export DEYE_TOKEN="yyy"
-./deye_cli.py station-list
+./deyecli.py station-list
 ```
 
 ### Precedenza configurazione
@@ -196,7 +195,7 @@ export DEYE_TOKEN="yyy"
 ### Avviare il server
 
 ```bash
-./deye_cli.py api --host 0.0.0.0 --port 8000
+./deyecli.py api --host 0.0.0.0 --port 8000
 ```
 
 ### Endpoint disponibili
@@ -297,16 +296,16 @@ DEYE_WEATHER_LON="12.4525"
 EOF
 
 # 2. Ottenere token
-./deye_cli.py token --password yourpassword
+./deyecli.py token --password yourpassword
 
 # 3. Testare
-./deye_cli.py station-list
+./deyecli.py station-list
 ```
 
 ### 2. Generare cron giornaliero
 
 ```bash
-./deye_cli.py solar-charge-cron \
+./deyecli.py solar-charge-cron \
   --lat 44.0637 \
   --lon 12.4525 \
   --restore-default-charge-current \
@@ -321,7 +320,7 @@ crontab ~/.config/deyecli/solar-charge.cron
 
 ```bash
 # Avviare server API
-./deye_cli.py api --host 0.0.0.0 --port 8000 &
+./deyecli.py api --host 0.0.0.0 --port 8000 &
 
 # Configurare Home Assistant con URL:
 # http://your-ip:8000/api/station/latest?station_id=123
@@ -340,19 +339,19 @@ Installare:
 pip install requests
 ```
 
-## Differenze da bash
+## Differenze rispetto allo script bash
 
 1. **Nessun `jq` richiesto**: JSON parsing nativo Python
 2. **Nessun `curl` richiesto**: Usa `requests` (o fallback a `curl`)
-3. **Password non deve essere salvata**: Automaticamente hashata
-4. **Server API integrato**: No bisogno di `api_server.py` separato
+3. **Server API integrato**: No bisogno di `api_server.py` separato
+4. **`solar-charge-cron --print-slots`**: Tabella completa con descrizioni meteo in italiano
 
 ## Troubleshooting
 
 ### "API request failed"
-- Verificare token: `./deye_cli.py show-config | grep TOKEN`
+- Verificare token: `./deyecli.py show-config | grep TOKEN`
 - Verificare parametri: `echo $DEYE_*`
-- Usare debug: `./deye_cli.py --print-query <comando>`
+- Usare debug: `./deyecli.py --print-query <comando>`
 
 ### "Weather API error"
 - Verificare coordinate: `--lat` e `--lon`

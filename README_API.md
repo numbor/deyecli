@@ -17,7 +17,7 @@ The Deye API Server exposes all CLI commands as RESTful HTTP endpoints, making i
 ### Basic Usage
 
 ```bash
-./deyecli.sh api
+./deyecli.py api
 ```
 
 Starts the server on `0.0.0.0:8000` (all interfaces, port 8000)
@@ -25,16 +25,10 @@ Starts the server on `0.0.0.0:8000` (all interfaces, port 8000)
 ### Custom Host and Port
 
 ```bash
-./deyecli.sh api --host localhost --port 9000
+./deyecli.py api --host localhost --port 9000
 ```
 
 Binds to `localhost:9000` (only accessible from this machine)
-
-### Custom API Script Location
-
-```bash
-./deyecli.sh api --api-script /path/to/api_server.py --port 8080
-```
 
 ## API Endpoints
 
@@ -325,7 +319,7 @@ curl -X POST "http://localhost:8000/api/solar-charge-cron" \
   "success": true,
   "command": "solar-charge-cron",
   "data": {
-    "raw_output": "# Deye CLI Solar Charge Cron Entries\n0 10 * * * deyecli.sh battery-parameter-update..."
+    "raw_output": "# Deye CLI Solar Charge Cron Entries\n0 10 * * * deyecli.py battery-parameter-update..."
   }
 }
 ```
@@ -469,7 +463,7 @@ After=network.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/deyecli
-ExecStart=/home/pi/deyecli/deyecli.sh api --host 0.0.0.0 --port 8000
+ExecStart=/home/pi/deyecli/deyecli.py api --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=10
 
@@ -503,7 +497,7 @@ netstat -tulpn | grep 8000
 
 Use a different port:
 ```bash
-./deyecli.sh api --port 9000
+./deyecli.py api --port 9000
 ```
 
 ### API requests timeout
@@ -515,7 +509,7 @@ curl --max-time 60 http://localhost:8000/api/station/list
 
 ### Authentication fails
 
-1. Verify token is valid: `./deyecli.sh token`
+1. Verify token is valid: `./deyecli.py token`
 2. Check config file permissions: `chmod 600 ~/.config/deyecli/config`
 3. Ensure token is passed correctly in `Authorization` header
 

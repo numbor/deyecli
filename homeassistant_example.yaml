@@ -4,8 +4,8 @@
 # Copy the relevant sections to your Home Assistant configuration.yaml
 #
 # Prerequisites:
-# 1. Deye API server running: ./deyecli.sh api --host 0.0.0.0 --port 8000
-# 2. Bearer token obtained: ./deyecli.sh token
+# 1. Deye API server running: ./deyecli.py api --host 0.0.0.0 --port 8000
+# 2. Bearer token obtained: ./deyecli.py token
 # 3. Device SN and Station ID known
 
 # ==============================================================================
@@ -270,7 +270,7 @@ script:
 # ==============================================================================
 #
 # 1. Set the input_text helpers with your actual values:
-#    - input_text.deye_token: Your bearer token from "deyecli.sh token"
+#    - input_text.deye_token: Your bearer token from "deyecli.py token"
 #    - input_text.deye_api_host: Your server host:port (e.g., 192.168.1.100:8000)
 #    - input_text.deye_device_sn: Your device serial number
 #    - input_text.deye_station_id: Your station ID

@@ -1,5 +1,7 @@
+[Buy Me a Coffee](https://buymeacoffee.com/numbor)
+
 # deyecli
-Bash CLI for [Deye Cloud](https://developer.deyecloud.com/api) REST APIs, designed to control and monitor Deye photovoltaic inverters directly from the terminal.
+Python CLI for [Deye Cloud](https://developer.deyecloud.com/api) REST APIs, designed to control and monitor Deye photovoltaic inverters directly from the terminal. Includes an integrated HTTP REST API server.
 
 ---
 
@@ -14,23 +16,27 @@ Bash CLI for [Deye Cloud](https://developer.deyecloud.com/api) REST APIs, design
 
 | Tool | Notes |
 |------|-------|
-| `bash` ≥ 4.0 | available on any modern Linux |
-| `curl` | for HTTP calls |
-| `jq` | JSON parsing/formatting — optional but recommended |
-| `sha256sum` | password hashing — included in `coreutils` |
+| `python3` ≥ 3.6 | available on any modern Linux |
+| `requests` | optional — for HTTP calls (falls back to `curl` if not installed) |
 
 ## Installation
 
 ```bash
 git clone <repo-url> deyecli
 cd deyecli
-chmod +x deyecli.sh
+chmod +x deyecli.py
+```
+
+Optionally, install the `requests` library for better HTTP support:
+
+```bash
+pip install requests
 ```
 
 Optionally, add a symlink to your `PATH`:
 
 ```bash
-ln -s "$PWD/deyecli.sh" ~/.local/bin/deyecli
+ln -s "$PWD/deyecli.py" ~/.local/bin/deyecli
 ```
 
 ---
@@ -90,7 +96,7 @@ All config file keys can be passed as environment variables:
 
 ```bash
 DEYE_APP_ID=xxx DEYE_APP_SECRET=yyy DEYE_EMAIL=me@example.com \
-  DEYE_PASSWORD=mypassword ./deyecli.sh token
+  DEYE_PASSWORD=mypassword ./deyecli.py token
 ```
 
 ---
@@ -104,7 +110,7 @@ DEYE_APP_ID=xxx DEYE_APP_SECRET=yyy DEYE_EMAIL=me@example.com \
 Performs login and obtains an `accessToken`. If the call is successful **the token is automatically saved** in `DEYE_TOKEN` in the config file (via `jq`).
 
 ```bash
-./deyecli.sh token
+./deyecli.py token
 ```
 
 **Required parameters:**
@@ -126,7 +132,7 @@ Performs login and obtains an `accessToken`. If the call is successful **the tok
 **Example:**
 
 ```bash
-./deyecli.sh token
+./deyecli.py token
 # → POST https://eu1-developer.deyecloud.com/v1.0/account/token?appId=...
 # ✔  DEYE_TOKEN saved to /home/user/.config/deyecli/config
 ```
@@ -157,13 +163,13 @@ The device serial number can be provided in three equivalent ways:
 
 ```bash
 # 1. Positional argument
-./deyecli.sh config-battery 2401110313
+./deyecli.py config-battery 2401110313
 
 # 2. Explicit flag
-./deyecli.sh config-battery --device-sn 2401110313
+./deyecli.py config-battery --device-sn 2401110313
 
 # 3. From config file (DEYE_DEVICE_SN)
-./deyecli.sh config-battery
+./deyecli.py config-battery
 ```
 
 **Required parameters:**
@@ -199,13 +205,13 @@ Reads the current system work mode, energy management pattern, and power limits 
 
 ```bash
 # Positional argument
-./deyecli.sh config-system 2401110313
+./deyecli.py config-system 2401110313
 
 # Explicit flag
-./deyecli.sh config-system --device-sn 2401110313
+./deyecli.py config-system --device-sn 2401110313
 
 # From config file (DEYE_DEVICE_SN)
-./deyecli.sh config-system
+./deyecli.py config-system
 ```
 
 **Required parameters:**
@@ -247,18 +253,18 @@ Sends a control command to set the value of a single battery parameter. The call
 
 ```bash
 # Set maximum charge current to 50 A
-./deyecli.sh battery-parameter-update \
+./deyecli.py battery-parameter-update \
     --param-type MAX_CHARGE_CURRENT \
     --value 50
 
 # With explicit device SN
-./deyecli.sh battery-parameter-update \
+./deyecli.py battery-parameter-update \
     --device-sn 2401110313 \
     --param-type MAX_DISCHARGE_CURRENT \
     --value 40
 
 # Device SN as positional argument
-./deyecli.sh battery-parameter-update 2401110313 \
+./deyecli.py battery-parameter-update 2401110313 \
     --param-type BATT_LOW \
     --value 15
 ```
@@ -309,13 +315,13 @@ cp config.example ~/.config/deyecli/config
 $EDITOR ~/.config/deyecli/config   # insert APP_ID, APP_SECRET, EMAIL, PASSWORD
 
 # 2. Login — token is automatically saved to config
-./deyecli.sh token
+./deyecli.py token
 
 # 3. Insert your inverter's serial number in the config
 #    (DEYE_DEVICE_SN=<serial>)
 
 # 4. Read battery configuration
-./deyecli.sh config-battery
+./deyecli.py config-battery
 ```
 
 ---
@@ -337,14 +343,14 @@ All options can appear before or after the command name:
 | `--company-id <id>` | `DEYE_COMPANY_ID` | Company ID for business token |
 | `--token <bearer>` | `DEYE_TOKEN` | Access token |
 | `--device-sn <sn>` | `DEYE_DEVICE_SN` | Device serial number |
-| `--print-query` | `DEYE_PRINT_QUERY` | Print all executed `curl` commands |
+| `--print-query` | `DEYE_PRINT_QUERY` | Print all outgoing HTTP requests |
 | `-h, --help` | | Show help |
 
 Example:
 
 ```bash
-./deyecli.sh station-list --print-query
-# ↪ curl --silent --show-error --request POST --url ...
+./deyecli.py station-list --print-query
+# → POST https://eu1-developer.deyecloud.com/v1.0/station/list
 ```
 
 ---

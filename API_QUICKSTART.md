@@ -1,8 +1,8 @@
 # API Command - Quick Start Guide
 
-## What's New?
+## Overview
 
-A new `api` command has been added to deyecli.sh that exposes all CLI commands as **HTTP REST endpoints**, making it easy to integrate with:
+The `api` command in `deyecli.py` exposes all CLI commands as **HTTP REST endpoints**, making it easy to integrate with:
 - **Home Assistant** (remote control of battery charging)
 - **Node-RED** (automation flows)
 - **Mobile apps** (custom integrations)
@@ -13,7 +13,7 @@ A new `api` command has been added to deyecli.sh that exposes all CLI commands a
 ### 1. Start the API Server
 
 ```bash
-./deyecli.sh api
+./deyecli.py api
 ```
 
 This starts the server on `http://0.0.0.0:8000` (all interfaces, port 8000)
@@ -44,24 +44,18 @@ See [homeassistant_example.yaml](homeassistant_example.yaml) for a complete Home
              │
              ▼
 ┌─────────────────────────────────────────┐
-│   Deye API Server (api_server.py)       │  ← localhost:8000
+│   deyecli.py (HTTP REST server)         │  ← localhost:8000
 │   ┌─────────────────────────────────┐   │
 │   │ HTTP Request Handler             │   │
 │   └────────────┬────────────────────┘   │
 │                │                         │
 │                ▼                         │
 │   ┌─────────────────────────────────┐   │
-│   │ Route to deyecli.sh command     │   │
-│   │ (e.g., battery-parameter-update)│   │
+│   │ Route to CLI command             │   │
+│   │ (e.g., battery-parameter-update) │   │
 │   └────────────┬────────────────────┘   │
 │                │                         │
 └────────────────┼─────────────────────────┘
-                 │
-                 ▼
-        ┌─────────────────────┐
-        │   deyecli.sh        │
-        │   (existing CLI)    │
-        └─────────────────────┘
                  │
                  ▼
         ┌─────────────────────┐
@@ -70,11 +64,11 @@ See [homeassistant_example.yaml](homeassistant_example.yaml) for a complete Home
         └─────────────────────┘
 ```
 
-## Files Added
+## Files
 
 | File | Purpose |
 |------|---------|
-| **api_server.py** | HTTP server that routes requests to deyecli.sh commands |
+| **deyecli.py** | Unified CLI + integrated HTTP REST server |
 | **README_API.md** | Complete API documentation with all endpoints |
 | **homeassistant_example.yaml** | Home Assistant integration template |
 | **test_api.sh** | Simple test script for API endpoints |
@@ -83,16 +77,13 @@ See [homeassistant_example.yaml](homeassistant_example.yaml) for a complete Home
 
 ```bash
 # Start server on default port (8000)
-./deyecli.sh api
+./deyecli.py api
 
 # Start on custom port
-./deyecli.sh api --port 9000
+./deyecli.py api --port 9000
 
 # Start on custom host and port
-./deyecli.sh api --host 192.168.1.100 --port 8080
-
-# Use custom API server script location
-./deyecli.sh api --api-script /path/to/api_server.py --port 8000
+./deyecli.py api --host 192.168.1.100 --port 8080
 ```
 
 ## Available Endpoints
@@ -169,7 +160,7 @@ After=network.target
 Type=simple
 User=pi
 WorkingDirectory=/home/pi/deyecli
-ExecStart=/home/pi/deyecli/deyecli.sh api --host 0.0.0.0 --port 8000
+ExecStart=/home/pi/deyecli/deyecli.py api --host 0.0.0.0 --port 8000
 Restart=always
 RestartSec=10
 
@@ -207,14 +198,10 @@ sudo journalctl -u deye-api -f
 
 ```bash
 lsof -i :8000  # Find process using the port
-./deyecli.sh api --port 9000  # Use a different port
+./deyecli.py api --port 9000  # Use a different port
 ```
 
 ### Server won't start
-
-```bash
-python3 api_server.py --host 0.0.0.0 --port 8000 --cli ./deyecli.sh
-```
 
 Check if Python 3 is available:
 
@@ -240,8 +227,9 @@ curl --max-time 60 http://localhost:8000/api/station/list
 **Status:** ✅ Ready for use
 
 **Requirements:**
-- Python 3.6+ (built-in http.server, socket modules)
-- Existing deyecli.sh setup with valid Deye Cloud credentials
-- Network access to deyecli script and Deye Cloud API
+- Python 3.6+ (built-in `http.server`, `socket` modules)
+- Valid Deye Cloud credentials configured in `~/.config/deyecli/config`
+- Network access to Deye Cloud API
 
-**No additional dependencies needed!**
+**Optional dependency:**
+- `pip install requests` — recommended for better HTTP support
