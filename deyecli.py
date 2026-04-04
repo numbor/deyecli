@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Deye CLI - Python translation of deyecli.sh with integrated API server
+Deye CLI - Python client and API server
 Exposes Deye Cloud API commands as CLI and REST endpoints
 https://developer.deyecloud.com/api
 """
@@ -630,7 +630,7 @@ class DeyCLI:
     def cmd_solar_charge_cron(self, args):
         """Generate solar charge cron file"""
 
-        # Italian weather code descriptions (matching deyecli.sh)
+        # Italian weather code descriptions
         WEATHER_DESCRIPTIONS = {
             0:  "Cielo sereno",
             1:  "Prevalentemente sereno",
