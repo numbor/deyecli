@@ -343,7 +343,7 @@ pip install requests
 
 1. **Nessun `jq` richiesto**: JSON parsing nativo Python
 2. **Nessun `curl` richiesto**: Usa `requests` (o fallback a `curl`)
-3. **Server API integrato**: No bisogno di `api_server.py` separato
+3. **Server API integrato**: No bisogno di server separato
 4. **`solar-charge-cron --print-slots`**: Tabella completa con descrizioni meteo in italiano
 
 ## Troubleshooting
