@@ -100,26 +100,38 @@ Parametri supportati:
 ./deyecli.py device-latest DEVICE_SN
 ```
 
-#### 8. Generare cron per carica solare
+#### 8. Generare cron per modulazione carica solare
+
+Questo comando viene eseguito alle prime ore della giornata. Analizza le previsioni meteo
+e genera un crontab che modula `MAX_CHARGE_CURRENT` ora per ora:
+- **Mattina** (alba → peak_start): valori bassi che salgono gradualmente, inversamente
+  proporzionali alla radiazione prevista. La batteria si carica lentamente e l'energia
+  in eccesso viene esportata verso la rete.
+- **Pranzo** (peak_start → peak_end): carica piena (default). La batteria si riempie.
+- **Pomeriggio** (dopo peak_end): carica piena (default).
+- **Giornata nuvolosa**: nessuna modulazione, default tutto il giorno.
 
 ```bash
 ./deyecli.py solar-charge-cron \
   --lat 44.0637 \
   --lon 12.4525 \
-  --hours 12 \
-  --min-radiation 200 \
   --low-charge-current 20 \
+  --peak-start 12 \
+  --peak-end 14 \
+  --print-slots \
   --dry-run
 ```
 
 Opzioni:
 - `--lat`, `--lon`: Coordinate GPS (obbligatorio)
 - `--hours`: Ore di forecast (default: 12)
-- `--min-radiation`: Radiazione minima W/m² (default: 200)
-- `--low-charge-current`: Corrente ridotta quando soleggiato (default: 20 A)
-- `--restore-default-charge-current`: Ripristinare valore originale dopo slot soleggiati
-- `--print-slots`: Mostrare tabella slot orari
-- `--dry-run`: Mostrare content senza scrivere file
+- `--min-radiation`: Radiazione minima W/m² per considerare un'ora "soleggiata" (default: 200)
+- `--low-charge-current`: Corrente minima nelle ore mattutine (default: 20 A)
+- `--default-charge-current`: Corrente di carica di default/massima (auto-detect se omesso)
+- `--peak-start`: Ora inizio carica piena (default: 12)
+- `--peak-end`: Ora fine carica piena (default: 14)
+- `--print-slots`: Mostrare tabella slot orari con corrente calcolata
+- `--dry-run`: Mostrare contenuto cron senza scrivere file
 - `--show-config`: Mostrare configurazione in uso
 
 #### 9. Mostrare configurazione
@@ -171,6 +183,8 @@ DEYE_WEATHER_LAT="44.0637"
 DEYE_WEATHER_LON="12.4525"
 DEYE_SOLAR_MIN_RADIATION="250"
 DEYE_SOLAR_LOW_CHARGE_CURRENT="25"
+DEYE_SOLAR_PEAK_START="12"
+DEYE_SOLAR_PEAK_END="14"
 ```
 
 ### Variabili d'ambiente
@@ -262,7 +276,7 @@ curl -X POST http://localhost:8000/api/battery/parameter/update \
 ```
 
 #### POST /api/solar-charge-cron
-Genera cron solare
+Genera cron modulazione carica solare
 ```bash
 curl -X POST http://localhost:8000/api/solar-charge-cron \
   -H "Authorization: Bearer YOUR_TOKEN" \
@@ -273,6 +287,8 @@ curl -X POST http://localhost:8000/api/solar-charge-cron \
     "hours": "12",
     "min_radiation": "200",
     "low_charge_current": "20",
+    "peak_start": "12",
+    "peak_end": "14",
     "device_sn": "ABC123"
   }'
 ```
@@ -308,8 +324,9 @@ EOF
 ./deyecli.py solar-charge-cron \
   --lat 44.0637 \
   --lon 12.4525 \
-  --restore-default-charge-current \
   --low-charge-current 15 \
+  --peak-start 12 \
+  --peak-end 14 \
   --print-slots
 
 # Installare crontab

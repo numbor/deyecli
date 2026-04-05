@@ -72,10 +72,11 @@ class DeyeConfig:
             'DEYE_WEATHER_LAT': '',
             'DEYE_WEATHER_LON': '',
             'DEYE_SOLAR_FORECAST_HOURS': '12',
-            'DEYE_SOLAR_CLOUD_MAX': '70',
             'DEYE_SOLAR_MIN_RADIATION': '200',
-            'DEYE_SOLAR_LOW_CHARGE_CURRENT': '20',
+            'DEYE_SOLAR_LOW_CHARGE_CURRENT': '5',
             'DEYE_SOLAR_DEFAULT_CHARGE_CURRENT': '',
+            'DEYE_SOLAR_PEAK_START': '12',
+            'DEYE_SOLAR_PEAK_END': '14',
             'DEYE_SOLAR_CRON_MINUTE': '5',
             'DEYE_SOLAR_CRON_FILE': os.path.expanduser('~/.config/deyecli/solar-charge.cron'),
         }
@@ -628,7 +629,13 @@ class DeyCLI:
         return EXIT_OK if status_code >= 200 and status_code < 300 else EXIT_API
     
     def cmd_solar_charge_cron(self, args):
-        """Generate solar charge cron file"""
+        """Generate solar charge cron file with gradual morning charge modulation.
+
+        Strategy: on sunny days, keep MAX_CHARGE_CURRENT low in the morning
+        (gradually ramping up) so the battery doesn't fill before lunch.
+        At peak hours (default 12-14) set full charge. After peak, restore default.
+        On cloudy days, keep default all day (no modulation).
+        """
 
         # Italian weather code descriptions
         WEATHER_DESCRIPTIONS = {
@@ -662,17 +669,19 @@ class DeyCLI:
         parser.add_argument('--lat')
         parser.add_argument('--lon')
         parser.add_argument('--hours', default=self.config.get('DEYE_SOLAR_FORECAST_HOURS', '12'))
-        parser.add_argument('--cloud-max', default=self.config.get('DEYE_SOLAR_CLOUD_MAX', '70'))
         parser.add_argument('--min-radiation', default=self.config.get('DEYE_SOLAR_MIN_RADIATION', '200'))
-        parser.add_argument('--low-charge-current', default=self.config.get('DEYE_SOLAR_LOW_CHARGE_CURRENT', '20'))
+        parser.add_argument('--low-charge-current', default=self.config.get('DEYE_SOLAR_LOW_CHARGE_CURRENT', '5'))
         parser.add_argument('--default-charge-current', default=self.config.get('DEYE_SOLAR_DEFAULT_CHARGE_CURRENT', ''))
-        parser.add_argument('--restore-default-charge-current', action='store_true')
+        parser.add_argument('--peak-start', default=self.config.get('DEYE_SOLAR_PEAK_START', '12'))
+        parser.add_argument('--peak-end', default=self.config.get('DEYE_SOLAR_PEAK_END', '14'))
         parser.add_argument('--minute', default=self.config.get('DEYE_SOLAR_CRON_MINUTE', '5'))
         parser.add_argument('--cron-file', default=self.config.get('DEYE_SOLAR_CRON_FILE'))
         parser.add_argument('--device-sn', default=self.config.get('DEYE_DEVICE_SN', ''))
         parser.add_argument('--print-slots', action='store_true')
+        parser.add_argument('--print-crontab', action='store_true')
         parser.add_argument('--dry-run', action='store_true')
         parser.add_argument('--show-config', action='store_true')
+        parser.add_argument('--install-crontab', action='store_true')
 
         try:
             parsed = parser.parse_args(args)
@@ -682,8 +691,6 @@ class DeyCLI:
         latitude = parsed.lat or self.config.get('DEYE_WEATHER_LAT')
         longitude = parsed.lon or self.config.get('DEYE_WEATHER_LON')
         default_charge_current = parsed.default_charge_current or ''
-        # --default-charge-current implies --restore-default-charge-current
-        restore_default = parsed.restore_default_charge_current or bool(default_charge_current)
 
         if not latitude or not longitude:
             print("[ERROR] Missing --lat and --lon or DEYE_WEATHER_LAT/DEYE_WEATHER_LON", file=sys.stderr)
@@ -712,6 +719,36 @@ class DeyCLI:
             print(f"[ERROR] Cron minute must be 0-59, got: {cron_min}", file=sys.stderr)
             return EXIT_USAGE
 
+        try:
+            peak_start = int(parsed.peak_start)
+        except:
+            print(f"[ERROR] --peak-start must be 0-23, got: '{parsed.peak_start}'", file=sys.stderr)
+            return EXIT_USAGE
+        if peak_start < 0 or peak_start > 23:
+            print(f"[ERROR] --peak-start must be 0-23, got: {peak_start}", file=sys.stderr)
+            return EXIT_USAGE
+
+        try:
+            peak_end = int(parsed.peak_end)
+        except:
+            print(f"[ERROR] --peak-end must be 0-23, got: '{parsed.peak_end}'", file=sys.stderr)
+            return EXIT_USAGE
+        if peak_end < 0 or peak_end > 23:
+            print(f"[ERROR] --peak-end must be 0-23, got: {peak_end}", file=sys.stderr)
+            return EXIT_USAGE
+        if peak_end <= peak_start:
+            print(f"[ERROR] --peak-end ({peak_end}) must be greater than --peak-start ({peak_start})", file=sys.stderr)
+            return EXIT_USAGE
+
+        try:
+            low_charge = int(parsed.low_charge_current)
+        except:
+            print(f"[ERROR] --low-charge-current must be a positive integer, got: '{parsed.low_charge_current}'", file=sys.stderr)
+            return EXIT_USAGE
+        if low_charge < 0 or low_charge > 200:
+            print(f"[ERROR] --low-charge-current must be 0-200, got: {low_charge}", file=sys.stderr)
+            return EXIT_USAGE
+
         if parsed.show_config:
             print("================================================================================", file=sys.stderr)
             print("              Current solar-charge-cron Configuration", file=sys.stderr)
@@ -719,10 +756,11 @@ class DeyCLI:
             print(f"  DEYE_WEATHER_LAT                  = {latitude}", file=sys.stderr)
             print(f"  DEYE_WEATHER_LON                  = {longitude}", file=sys.stderr)
             print(f"  DEYE_SOLAR_FORECAST_HOURS         = {parsed.hours} hours", file=sys.stderr)
-            print(f"  DEYE_SOLAR_CLOUD_MAX              = {parsed.cloud_max} %", file=sys.stderr)
             print(f"  DEYE_SOLAR_MIN_RADIATION          = {parsed.min_radiation} W/m²", file=sys.stderr)
             print(f"  DEYE_SOLAR_LOW_CHARGE_CURRENT     = {parsed.low_charge_current} A", file=sys.stderr)
             print(f"  DEYE_SOLAR_DEFAULT_CHARGE_CURRENT = {default_charge_current or 'auto-detect'}", file=sys.stderr)
+            print(f"  DEYE_SOLAR_PEAK_START             = {peak_start}:00", file=sys.stderr)
+            print(f"  DEYE_SOLAR_PEAK_END               = {peak_end}:00", file=sys.stderr)
             print(f"  DEYE_SOLAR_CRON_MINUTE            = {parsed.minute}", file=sys.stderr)
             print(f"  DEYE_SOLAR_CRON_FILE              = {parsed.cron_file}", file=sys.stderr)
             print(f"  DEYE_DEVICE_SN                    = {parsed.device_sn or 'not set'}", file=sys.stderr)
@@ -788,9 +826,8 @@ class DeyCLI:
             print("[ERROR] Weather API response missing expected hourly fields.", file=sys.stderr)
             return EXIT_API
 
-        # Build slot info and find sunny slots
+        # Build slot info
         min_rad = float(parsed.min_radiation)
-        sunny_slots = []
         slot_data = []
 
         for i, t in enumerate(times):
@@ -799,11 +836,16 @@ class DeyCLI:
             radiation = radiations[i]   if i < len(radiations)   else 0
             code      = weather_codes[i] if i < len(weather_codes) else 99
 
+            # Parse hour from time string
+            time_part = t.split('T')[1] if 'T' in t else '00:00'
+            hour = int(time_part.split(':')[0])
+
             # Sunny: daytime + direct radiation above threshold + clear weathercode
             is_sunny = (is_day == 1 and radiation > min_rad and code < 51 and code not in (45, 48))
 
             slot_data.append({
                 'time':        t,
+                'hour':        hour,
                 'is_day':      is_day,
                 'cloudcover':  cloudcover,
                 'weathercode': code,
@@ -812,40 +854,16 @@ class DeyCLI:
                 'sunny':       is_sunny,
             })
 
-            if is_sunny:
-                sunny_slots.append(t)
+        # Determine if this is a "solar day": at least 2 morning hours (before peak)
+        # with radiation above threshold
+        morning_sunny_count = sum(
+            1 for s in slot_data
+            if s['sunny'] and s['hour'] < peak_start
+        )
+        is_solar_day = morning_sunny_count >= 2
 
-        # Print full table identical to deyecli.sh --print-slots output
-        if parsed.print_slots:
-            headers = [
-                'ora_locale', 'is_day', 'cloudcover_pct',
-                'weathercode', 'descrizione', 'direct_rad_w/m2', 'sunny_slot'
-            ]
-            rows = []
-            for s in slot_data:
-                time_str = s['time'].replace('T', ' ')
-                rows.append([
-                    time_str,
-                    str(s['is_day']),
-                    str(s['cloudcover']),
-                    str(s['weathercode']),
-                    s['description'],
-                    str(s['radiation']),
-                    'SI' if s['sunny'] else 'NO',
-                ])
-
-            col_widths = [len(h) for h in headers]
-            for row in rows:
-                for j, cell in enumerate(row):
-                    col_widths[j] = max(col_widths[j], len(cell))
-
-            fmt = '  '.join(f'{{:<{w}}}' for w in col_widths)
-            print(fmt.format(*headers))
-            for row in rows:
-                print(fmt.format(*row))
-
-        # Auto-detect default charge current via config-battery if needed
-        if restore_default and sunny_slots and not default_charge_current:
+        # Auto-detect default charge current from battery config
+        if not default_charge_current:
             device_sn = parsed.device_sn
             if not device_sn:
                 print("[ERROR] Cannot auto-detect default MAX_CHARGE_CURRENT without --device-sn or DEYE_DEVICE_SN.", file=sys.stderr)
@@ -877,19 +895,93 @@ class DeyCLI:
             if not self._validate_battery_param('MAX_CHARGE_CURRENT', default_charge_current):
                 return EXIT_API
 
+        default_charge = int(default_charge_current)
+
+        # Compute per-hour charge current for solar days
+        # On cloudy days, all hours keep default (no cron entries needed)
+        if is_solar_day:
+            # Find first sunny hour as modulation start
+            modulation_start = peak_start
+            for s in slot_data:
+                if s.get('sunny') and s['hour'] < peak_start:
+                    modulation_start = s['hour']
+                    break
+
+            for s in slot_data:
+                hour = s['hour']
+                if not s['is_day']:
+                    s['charge_current'] = default_charge
+                elif hour >= modulation_start and hour < peak_start:
+                    # Morning before peak: cubic ramp (stays low, rises late)
+                    span = peak_start - modulation_start
+                    if span > 0:
+                        t = (hour - modulation_start) / span  # 0.0 → 1.0
+                        time_factor = t * t * t * t  # quartic: stays very low, rises late
+                    else:
+                        time_factor = 1.0
+                    s['charge_current'] = max(low_charge, min(default_charge, round(
+                        low_charge + (default_charge - low_charge) * time_factor
+                    )))
+                elif hour >= peak_start and hour < peak_end:
+                    # Peak hours: full charge
+                    s['charge_current'] = default_charge
+                else:
+                    # After peak or before first sunny hour: default
+                    s['charge_current'] = default_charge
+        else:
+            # Cloudy day: no modulation
+            for s in slot_data:
+                s['charge_current'] = default_charge
+
+        # Print full table
+        if parsed.print_slots:
+            headers = [
+                'ora_locale', 'is_day', 'cloudcover_pct',
+                'weathercode', 'descrizione', 'direct_rad_w/m2', 'sunny_slot',
+                'charge_A'
+            ]
+            rows = []
+            for s in slot_data:
+                time_str = s['time'].replace('T', ' ')
+                rows.append([
+                    time_str,
+                    str(s['is_day']),
+                    str(s['cloudcover']),
+                    str(s['weathercode']),
+                    s['description'],
+                    str(s['radiation']),
+                    'SI' if s['sunny'] else 'NO',
+                    str(s['charge_current']),
+                ])
+
+            col_widths = [len(h) for h in headers]
+            for row in rows:
+                for j, cell in enumerate(row):
+                    col_widths[j] = max(col_widths[j], len(cell))
+
+            fmt = '  '.join(f'{{:<{w}}}' for w in col_widths)
+            print(fmt.format(*headers))
+            for row in rows:
+                print(fmt.format(*row))
+
+        if not is_solar_day:
+            print(f"ℹ Giornata nuvolosa: solo {morning_sunny_count} ore solari mattutine (minimo 2). Nessuna modulazione.", file=sys.stderr)
+
         # Script path for cron commands (absolute path of the running script)
         script_path = os.path.abspath(__file__)
         config_path = self.config.config_file
-        device_q = f" --device-sn {parsed.device_sn}" if parsed.device_sn else ""
-
-        # Generate cron entries (one per unique hour)
+        # Generate cron entries: one per hour where charge_current != default
         cron_lines = []
         seen = set()
+        modulated_count = 0
 
-        for ts in sunny_slots:
-            date_part = ts.split('T')[0]
-            time_part = ts.split('T')[1] if 'T' in ts else '00:00'
-            hour = time_part.split(':')[0]
+        for s in slot_data:
+            if s['charge_current'] == default_charge:
+                continue
+
+            t = s['time']
+            date_part = t.split('T')[0]
+            hour = s['hour']
 
             key = f"{date_part}-{hour}"
             if key in seen:
@@ -897,49 +989,50 @@ class DeyCLI:
             seen.add(key)
 
             year, month, day = date_part.split('-')
-            hour_int  = int(hour)
             month_int = int(month)
             day_int   = int(day)
 
             cron_lines.append(
-                f"{cron_min} {hour_int} {day_int} {month_int} * "
+                f"{cron_min} {hour} {day_int} {month_int} * "
                 f'[ "$(date +\\%Y-\\%m-\\%d)" = "{date_part}" ] && '
                 f"DEYE_CONFIG='{config_path}' '{script_path}' "
                 f"battery-parameter-update --param-type MAX_CHARGE_CURRENT "
-                f"--value {parsed.low_charge_current}{device_q} >/dev/null 2>&1"
+                f"--value {s['charge_current']} >>/tmp/deyecli.log 2>&1"
             )
+            modulated_count += 1
 
-        # Restore cron line: 1 hour after the last sunny slot
-        restore_line = ""
-        if restore_default and sunny_slots and default_charge_current:
-            last_ts = sunny_slots[-1]
-            try:
-                last_dt = datetime.fromisoformat(last_ts)
-                restore_dt = last_dt + timedelta(hours=1)
-                restore_date  = restore_dt.strftime('%Y-%m-%d')
-                restore_hour  = restore_dt.hour
-                restore_month = restore_dt.month
-                restore_day   = restore_dt.day
+        # Add restore entry at peak_start to set default charge current
+        if is_solar_day and cron_lines:
+            # Find the date of the first modulated slot
+            first_date = slot_data[0]['time'].split('T')[0]
+            for s in slot_data:
+                if s['charge_current'] != default_charge:
+                    first_date = s['time'].split('T')[0]
+                    break
+            year, month, day = first_date.split('-')
+            month_int = int(month)
+            day_int   = int(day)
 
-                restore_line = (
-                    f"{cron_min} {restore_hour} {restore_day} {restore_month} * "
-                    f'[ "$(date +\\%Y-\\%m-\\%d)" = "{restore_date}" ] && '
+            restore_key = f"{first_date}-{peak_start}"
+            if restore_key not in seen:
+                cron_lines.append(
+                    f"# Ripristino MAX_CHARGE_CURRENT a {default_charge} A (inizio peak)\n"
+                    f"{cron_min} {peak_start} {day_int} {month_int} * "
+                    f'[ "$(date +\\%Y-\\%m-\\%d)" = "{first_date}" ] && '
                     f"DEYE_CONFIG='{config_path}' '{script_path}' "
                     f"battery-parameter-update --param-type MAX_CHARGE_CURRENT "
-                    f"--value {default_charge_current}{device_q} >/dev/null 2>&1"
+                    f"--value {default_charge} >>/tmp/deyecli.log 2>&1"
                 )
-            except Exception as e:
-                print(f"[ERROR] Unable to compute restore time from forecast slot '{last_ts}': {e}", file=sys.stderr)
-                return EXIT_API
 
         # Build cron file content
         generated_on = datetime.utcnow().isoformat() + 'Z'
         cron_content = (
             f"# deyecli solar-charge-cron generated at {generated_on}\n"
-            f"# Location: lat={latitude}, lon={longitude}; forecast_hours={forecast_h}; cloud_max={parsed.cloud_max}\n"
+            f"# Location: lat={latitude}, lon={longitude}; forecast_hours={forecast_h}\n"
+            f"# Strategy: gradual morning ramp {low_charge}A → {default_charge}A, peak {peak_start}:00-{peak_end}:00\n"
         )
-        if restore_default and default_charge_current:
-            cron_content += f"# Restore MAX_CHARGE_CURRENT to {default_charge_current} after the last sunny slot\n"
+        if not is_solar_day:
+            cron_content += f"# Cloudy day: {morning_sunny_count} sunny morning hours (min 2). No modulation.\n"
         cron_content += (
             f"# Install: crontab {parsed.cron_file}\n"
             f"SHELL=/bin/bash\n"
@@ -949,14 +1042,9 @@ class DeyCLI:
         if cron_lines:
             for line in cron_lines:
                 cron_content += line + "\n"
-            print(f"✔ Detected {len(sunny_slots)} sunny slot(s).", file=sys.stderr)
-            if restore_line:
-                cron_content += "# Restore default MAX_CHARGE_CURRENT\n"
-                cron_content += restore_line + "\n"
-                print(f"✔ Restore MAX_CHARGE_CURRENT scheduled to {default_charge_current} after the last sunny slot.", file=sys.stderr)
+            print(f"✔ {modulated_count} ore modulate (mattina), ripristino a {default_charge}A alle {peak_start}:00.", file=sys.stderr)
         else:
-            cron_content += f"# No sunny slots detected in next {forecast_h} hours.\n"
-            print(f"ℹ No sunny slots detected in next {forecast_h} hours.", file=sys.stderr)
+            cron_content += f"# Nessuna modulazione necessaria.\n"
 
         if parsed.dry_run:
             print(cron_content)
@@ -968,7 +1056,19 @@ class DeyCLI:
         os.chmod(parsed.cron_file, 0o600)
 
         print(f"✔ Cron file generated: {parsed.cron_file}", file=sys.stderr)
-        print(f"  Install with: crontab {parsed.cron_file}", file=sys.stderr)
+
+        if parsed.print_crontab:
+            print(cron_content)
+
+        if parsed.install_crontab:
+            ret = os.system(f"crontab '{parsed.cron_file}'")
+            if ret == 0:
+                print(f"✔ Crontab installed: crontab {parsed.cron_file}", file=sys.stderr)
+            else:
+                print(f"✘ Failed to install crontab (exit code {ret})", file=sys.stderr)
+                return EXIT_API
+        else:
+            print(f"  Install with: crontab {parsed.cron_file}", file=sys.stderr)
 
         return EXIT_OK
     
@@ -1040,7 +1140,7 @@ WEATHER/SOLAR PARAMETERS:
   DEYE_SOLAR_MIN_RADIATION (default: 200)
     Minimum direct radiation in W/m² for sunny slot.
 
-  DEYE_SOLAR_LOW_CHARGE_CURRENT (default: 20)
+  DEYE_SOLAR_LOW_CHARGE_CURRENT (default: 5)
     Target charge current when sunny (Amperes).
 
   DEYE_SOLAR_DEFAULT_CHARGE_CURRENT
@@ -1138,10 +1238,10 @@ class DeyeAPIServer:
                 'api/station/latest': ('station-latest', ['station_id']),
                 'api/device/latest': ('device-latest', ['device_sn']),
                 'api/solar-charge-cron': ('solar-charge-cron', [
-                    'lat', 'lon', 'hours', 'cloud_max', 'min_radiation',
-                    'low_charge_current', 'restore_default_charge_current',
-                    'default_charge_current', 'minute', 'cron_file', 'device_sn',
-                    'print_slots', 'dry_run'
+                    'lat', 'lon', 'hours', 'min_radiation',
+                    'low_charge_current', 'default_charge_current',
+                    'peak_start', 'peak_end', 'minute', 'cron_file',
+                    'device_sn', 'print_slots', 'dry_run'
                 ]),
             }
             
@@ -1333,16 +1433,18 @@ Examples:
     solar_parser.add_argument('--lat', help='Latitude')
     solar_parser.add_argument('--lon', help='Longitude')
     solar_parser.add_argument('--hours', type=int, help='Forecast hours')
-    solar_parser.add_argument('--cloud-max', type=int, help='Max cloud cover %')
     solar_parser.add_argument('--min-radiation', type=int, help='Min radiation W/m²')
     solar_parser.add_argument('--low-charge-current', type=int, help='Low charge current A')
-    solar_parser.add_argument('--restore-default-charge-current', action='store_true')
-    solar_parser.add_argument('--default-charge-current', type=int)
+    solar_parser.add_argument('--default-charge-current', type=int, help='Default charge current A (auto-detect if omitted)')
+    solar_parser.add_argument('--peak-start', type=int, help='Peak charge start hour (default: 12)')
+    solar_parser.add_argument('--peak-end', type=int, help='Peak charge end hour (default: 14)')
     solar_parser.add_argument('--minute', type=int, help='Cron minute')
     solar_parser.add_argument('--cron-file', help='Cron file path')
     solar_parser.add_argument('--print-slots', action='store_true')
+    solar_parser.add_argument('--print-crontab', action='store_true', help='Print generated crontab content')
     solar_parser.add_argument('--dry-run', action='store_true')
     solar_parser.add_argument('--show-config', action='store_true')
+    solar_parser.add_argument('--install-crontab', action='store_true', help='Install crontab in the system after generating')
     
     # API server command
     api_parser = subparsers.add_parser('api', help='Start HTTP API server')
@@ -1421,24 +1523,30 @@ Examples:
             cmd_args.extend(['--lon', str(args.lon)])
         if args.hours:
             cmd_args.extend(['--hours', str(args.hours)])
-        if args.cloud_max:
-            cmd_args.extend(['--cloud-max', str(args.cloud_max)])
         if args.min_radiation:
             cmd_args.extend(['--min-radiation', str(args.min_radiation)])
         if args.low_charge_current:
             cmd_args.extend(['--low-charge-current', str(args.low_charge_current)])
-        if args.restore_default_charge_current:
-            cmd_args.append('--restore-default-charge-current')
         if args.default_charge_current:
             cmd_args.extend(['--default-charge-current', str(args.default_charge_current)])
+        if args.peak_start:
+            cmd_args.extend(['--peak-start', str(args.peak_start)])
+        if args.peak_end:
+            cmd_args.extend(['--peak-end', str(args.peak_end)])
         if args.minute:
             cmd_args.extend(['--minute', str(args.minute)])
         if args.cron_file:
             cmd_args.extend(['--cron-file', args.cron_file])
         if args.print_slots:
             cmd_args.append('--print-slots')
+        if args.print_crontab:
+            cmd_args.append('--print-crontab')
         if args.dry_run:
             cmd_args.append('--dry-run')
+        if args.show_config:
+            cmd_args.append('--show-config')
+        if args.install_crontab:
+            cmd_args.append('--install-crontab')
         return cli.cmd_solar_charge_cron(cmd_args)
     elif args.command == 'api':
         server = DeyeAPIServer(cli, args.host, args.port)
