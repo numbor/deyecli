@@ -82,6 +82,7 @@ class DeyeConfig:
             'DEYE_SOLAR_DEFAULT_CHARGE_CURRENT': '',
             'DEYE_SOLAR_PEAK_START': '',
             'DEYE_SOLAR_PEAK_END': '',
+            'DEYE_SOLAR_RAMP_EXPONENT': '4',
             'DEYE_SOLAR_CRON_MINUTE': '5',
             'DEYE_SOLAR_CRON_FILE': os.path.expanduser('~/.config/deyecli/solar-charge.cron'),
         }
@@ -679,6 +680,7 @@ class DeyCLI:
         parser.add_argument('--default-charge-current', default=self.config.get('DEYE_SOLAR_DEFAULT_CHARGE_CURRENT', ''))
         parser.add_argument('--peak-start', default=self.config.get('DEYE_SOLAR_PEAK_START', ''))
         parser.add_argument('--peak-end', default=self.config.get('DEYE_SOLAR_PEAK_END', ''))
+        parser.add_argument('--ramp-exponent', default=self.config.get('DEYE_SOLAR_RAMP_EXPONENT', '4'))
         parser.add_argument('--minute', default=self.config.get('DEYE_SOLAR_CRON_MINUTE', '5'))
         parser.add_argument('--cron-file', default=self.config.get('DEYE_SOLAR_CRON_FILE'))
         parser.add_argument('--device-sn', default=self.config.get('DEYE_DEVICE_SN', ''))
@@ -733,6 +735,16 @@ class DeyCLI:
             _log(f"[ERROR] --low-charge-current must be 0-200, got: {low_charge}")
             return EXIT_USAGE
 
+        try:
+            ramp_exp = float(parsed.ramp_exponent)
+        except:
+            _log(f"[ERROR] --ramp-exponent must be a positive number, got: '{parsed.ramp_exponent}'")
+            return EXIT_USAGE
+        if ramp_exp <= 0:
+            _log(f"[ERROR] --ramp-exponent must be > 0, got: {ramp_exp}")
+            return EXIT_USAGE
+            return EXIT_USAGE
+
         if parsed.show_config:
             _log("================================================================================")
             _log("              Current solar-charge-cron Configuration")
@@ -745,6 +757,7 @@ class DeyCLI:
             _log(f"  DEYE_SOLAR_DEFAULT_CHARGE_CURRENT = {default_charge_current or 'auto-detect'}")
             _log(f"  DEYE_SOLAR_PEAK_START             = {parsed.peak_start or 'auto-detect'}")
             _log(f"  DEYE_SOLAR_PEAK_END               = {parsed.peak_end or 'auto-detect'}")
+            _log(f"  DEYE_SOLAR_RAMP_EXPONENT          = {parsed.ramp_exponent}")
             _log(f"  DEYE_SOLAR_CRON_MINUTE            = {parsed.minute}")
             _log(f"  DEYE_SOLAR_CRON_FILE              = {parsed.cron_file}")
             _log(f"  DEYE_DEVICE_SN                    = {parsed.device_sn or 'not set'}")
@@ -939,7 +952,7 @@ class DeyCLI:
                     span = peak_start - modulation_start
                     if span > 0:
                         t = (hour - modulation_start) / span  # 0.0 → 1.0
-                        time_factor = t * t * t * t  # quartic: stays very low, rises late
+                        time_factor = t ** ramp_exp  # configurable ramp curve
                     else:
                         time_factor = 1.0
                     s['charge_current'] = max(low_charge, min(default_charge, round(
@@ -1452,7 +1465,30 @@ Examples:
     subparsers.add_parser('device-latest', help='Get latest device data')
     
     # Solar charge cron
-    solar_parser = subparsers.add_parser('solar-charge-cron', help='Generate solar charge cron')
+    solar_parser = subparsers.add_parser('solar-charge-cron',
+        help='Generate solar charge cron',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''Funzionamento:
+  Analizza le previsioni meteo (Open-Meteo) e genera un crontab che modula
+  MAX_CHARGE_CURRENT ora per ora durante la mattina, in modo che la batteria
+  si carichi lentamente e l'energia in eccesso venga esportata verso la rete.
+
+  La rampa mattutina segue una curva esponenziale: charge = low + (max - low) * t^exp
+  dove t va da 0 (prima ora soleggiata) a 1 (inizio peak).
+
+  --ramp-exponent controlla la forma della curva:
+    1   = lineare (sale uniformemente)
+    2   = quadratica (sale piano, poi accelera)
+    4   = quartica (resta bassa a lungo, sale tardi) [default]
+    6+  = molto piatta (quasi tutto al minimo, impennata finale)
+
+  Il peak (ore di carica piena) viene auto-rilevato dall'ora con massima
+  radiazione solare prevista. Puo' essere forzato con --peak-start/--peak-end.
+
+Esempio:
+  deyecli.py solar-charge-cron --ramp-exponent 2 --print-slots --dry-run
+  deyecli.py solar-charge-cron --ramp-exponent 6 --install-crontab
+''')
     solar_parser.add_argument('--lat', help='Latitude')
     solar_parser.add_argument('--lon', help='Longitude')
     solar_parser.add_argument('--hours', type=int, help='Forecast hours')
@@ -1461,6 +1497,7 @@ Examples:
     solar_parser.add_argument('--default-charge-current', type=int, help='Default charge current A (auto-detect if omitted)')
     solar_parser.add_argument('--peak-start', type=int, help='Peak charge start hour (auto-detect from max radiation if omitted)')
     solar_parser.add_argument('--peak-end', type=int, help='Peak charge end hour (auto-detect if omitted)')
+    solar_parser.add_argument('--ramp-exponent', type=float, help='Ramp curve exponent (1=linear, 4=default, 6+=very flat)')
     solar_parser.add_argument('--minute', type=int, help='Cron minute')
     solar_parser.add_argument('--cron-file', help='Cron file path')
     solar_parser.add_argument('--print-slots', action='store_true')
@@ -1556,6 +1593,8 @@ Examples:
             cmd_args.extend(['--peak-start', str(args.peak_start)])
         if args.peak_end:
             cmd_args.extend(['--peak-end', str(args.peak_end)])
+        if args.ramp_exponent:
+            cmd_args.extend(['--ramp-exponent', str(args.ramp_exponent)])
         if args.minute:
             cmd_args.extend(['--minute', str(args.minute)])
         if args.cron_file:
