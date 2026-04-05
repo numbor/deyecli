@@ -38,6 +38,11 @@ logger = logging.getLogger(__name__)
 EXIT_OK = 0
 EXIT_USAGE = 2
 EXIT_DEP = 3
+
+def _log(msg):
+    """Print a message to stderr with a date/time prefix."""
+    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f"[{ts}] {msg}", file=sys.stderr)
 EXIT_AUTH = 4
 EXIT_NETWORK = 5
 EXIT_API = 6
@@ -321,7 +326,7 @@ class DeyCLI:
     def _validate_positive_int(name: str, value: str) -> bool:
         """Validate positive integer"""
         if not value or not value.isdigit() or int(value) == 0:
-            print(f"[ERROR] {name} must be a positive integer, got: '{value}'", file=sys.stderr)
+            _log(f"[ERROR] {name} must be a positive integer, got: '{value}'")
             return False
         return True
     
@@ -329,7 +334,7 @@ class DeyCLI:
     def _validate_non_negative_int(name: str, value: str) -> bool:
         """Validate non-negative integer"""
         if not value or not value.isdigit():
-            print(f"[ERROR] {name} must be a non-negative integer, got: '{value}'", file=sys.stderr)
+            _log(f"[ERROR] {name} must be a non-negative integer, got: '{value}'")
             return False
         return True
     
@@ -339,31 +344,31 @@ class DeyCLI:
         try:
             fval = float(value)
             if fval < min_val or fval > max_val:
-                print(f"[ERROR] {name} must be between {min_val} and {max_val}, got: '{value}'", file=sys.stderr)
+                _log(f"[ERROR] {name} must be between {min_val} and {max_val}, got: '{value}'")
                 return False
             return True
         except:
-            print(f"[ERROR] {name} must be a number, got: '{value}'", file=sys.stderr)
+            _log(f"[ERROR] {name} must be a number, got: '{value}'")
             return False
     
     def _validate_device_sn(self, device_sn: str) -> bool:
         """Validate device serial number"""
         if not re.match(r'^[A-Za-z0-9_-]{6,32}$', device_sn):
-            print(f"[ERROR] Device serial number format is invalid: '{device_sn}'", file=sys.stderr)
+            _log(f"[ERROR] Device serial number format is invalid: '{device_sn}'")
             return False
         return True
     
     def _validate_station_id(self, station_id: str) -> bool:
         """Validate station ID"""
         if not re.match(r'^[1-9][0-9]*$', station_id):
-            print(f"[ERROR] Station ID must be a positive integer, got: '{station_id}'", file=sys.stderr)
+            _log(f"[ERROR] Station ID must be a positive integer, got: '{station_id}'")
             return False
         return True
     
     def _validate_battery_param(self, param_type: str, value: str) -> bool:
         """Validate battery parameter"""
         if not value.isdigit():
-            print(f"[ERROR] Parameter value must be a positive integer, got: '{value}'", file=sys.stderr)
+            _log(f"[ERROR] Parameter value must be a positive integer, got: '{value}'")
             return False
         
         ivalue = int(value)
@@ -375,7 +380,7 @@ class DeyCLI:
         }
         
         if param_type in ranges and ivalue > ranges[param_type]:
-            print(f"[ERROR] {param_type} must be ≤ {ranges[param_type]}, got: {ivalue}", file=sys.stderr)
+            _log(f"[ERROR] {param_type} must be ≤ {ranges[param_type]}, got: {ivalue}")
             return False
         
         return True
@@ -385,7 +390,7 @@ class DeyCLI:
         
         for key in ['DEYE_APP_ID', 'DEYE_APP_SECRET', 'DEYE_PASSWORD']:
             if not self.config.get(key):
-                print(f"[ERROR] Missing required parameter: {key}", file=sys.stderr)
+                _log(f"[ERROR] Missing required parameter: {key}")
                 return EXIT_USAGE
         
         if not any([
@@ -393,11 +398,11 @@ class DeyCLI:
             self.config.get('DEYE_EMAIL'),
             self.config.get('DEYE_MOBILE')
         ]):
-            print("[ERROR] Missing one of: DEYE_USERNAME, DEYE_EMAIL, or DEYE_MOBILE", file=sys.stderr)
+            _log("[ERROR] Missing one of: DEYE_USERNAME, DEYE_EMAIL, or DEYE_MOBILE")
             return EXIT_USAGE
         
         if self.config.get('DEYE_MOBILE') and not self.config.get('DEYE_COUNTRY_CODE'):
-            print("[ERROR] DEYE_COUNTRY_CODE required when using DEYE_MOBILE", file=sys.stderr)
+            _log("[ERROR] DEYE_COUNTRY_CODE required when using DEYE_MOBILE")
             return EXIT_USAGE
         
         # Hash password
@@ -421,7 +426,7 @@ class DeyCLI:
         
         url = f"{self.config.get('DEYE_BASE_URL')}/v1.0/account/token?appId={self.config.get('DEYE_APP_ID')}"
         
-        print(f"→ POST {url}", file=sys.stderr)
+        _log(f"→ POST {url}")
         
         status_code, response = self.api.api_post_json(url, body)
         
@@ -432,11 +437,11 @@ class DeyCLI:
             if response.get('accessToken'):
                 token = response['accessToken']
                 self.config.save_config('DEYE_TOKEN', token)
-                print(f"✔ DEYE_TOKEN saved to {self.config.config_file}", file=sys.stderr)
+                _log(f"✔ DEYE_TOKEN saved to {self.config.config_file}")
             
             return EXIT_OK
         
-        print(json.dumps(response, indent=2), file=sys.stderr)
+        _log(json.dumps(response, indent=2))
         return EXIT_API
     
     def cmd_config_battery(self, args):
@@ -449,10 +454,10 @@ class DeyCLI:
             device_sn = args[0]
         
         if not self.config.get('DEYE_TOKEN'):
-            print("[ERROR] Missing DEYE_TOKEN", file=sys.stderr)
+            _log("[ERROR] Missing DEYE_TOKEN")
             return EXIT_USAGE
         if not device_sn:
-            print("[ERROR] Missing device serial number", file=sys.stderr)
+            _log("[ERROR] Missing device serial number")
             return EXIT_USAGE
         
         if not self._validate_device_sn(device_sn):
@@ -461,7 +466,7 @@ class DeyCLI:
         body = {'deviceSn': device_sn}
         url = f"{self.config.get('DEYE_BASE_URL')}/v1.0/config/battery"
         
-        print(f"→ POST {url}", file=sys.stderr)
+        _log(f"→ POST {url}")
         
         status_code, response = self.api.api_post_json(url, body, self.config.get('DEYE_TOKEN'))
         
@@ -478,10 +483,10 @@ class DeyCLI:
             device_sn = args[0]
         
         if not self.config.get('DEYE_TOKEN'):
-            print("[ERROR] Missing DEYE_TOKEN", file=sys.stderr)
+            _log("[ERROR] Missing DEYE_TOKEN")
             return EXIT_USAGE
         if not device_sn:
-            print("[ERROR] Missing device serial number", file=sys.stderr)
+            _log("[ERROR] Missing device serial number")
             return EXIT_USAGE
         
         if not self._validate_device_sn(device_sn):
@@ -490,7 +495,7 @@ class DeyCLI:
         body = {'deviceSn': device_sn}
         url = f"{self.config.get('DEYE_BASE_URL')}/v1.0/config/system"
         
-        print(f"→ POST {url}", file=sys.stderr)
+        _log(f"→ POST {url}")
         
         status_code, response = self.api.api_post_json(url, body, self.config.get('DEYE_TOKEN'))
         
@@ -515,21 +520,21 @@ class DeyCLI:
         value = parsed.value
         
         if not self.config.get('DEYE_TOKEN'):
-            print("[ERROR] Missing DEYE_TOKEN", file=sys.stderr)
+            _log("[ERROR] Missing DEYE_TOKEN")
             return EXIT_USAGE
         if not device_sn:
-            print("[ERROR] Missing device serial number", file=sys.stderr)
+            _log("[ERROR] Missing device serial number")
             return EXIT_USAGE
         if not param_type:
-            print("[ERROR] Missing --param-type", file=sys.stderr)
+            _log("[ERROR] Missing --param-type")
             return EXIT_USAGE
         if not value:
-            print("[ERROR] Missing --value", file=sys.stderr)
+            _log("[ERROR] Missing --value")
             return EXIT_USAGE
         
         valid_types = ['MAX_CHARGE_CURRENT', 'MAX_DISCHARGE_CURRENT', 'GRID_CHARGE_AMPERE', 'BATT_LOW']
         if param_type not in valid_types:
-            print(f"[ERROR] Invalid param-type. Valid: {', '.join(valid_types)}", file=sys.stderr)
+            _log(f"[ERROR] Invalid param-type. Valid: {', '.join(valid_types)}")
             return EXIT_USAGE
         
         if not self._validate_device_sn(device_sn):
@@ -546,7 +551,7 @@ class DeyCLI:
         
         url = f"{self.config.get('DEYE_BASE_URL')}/v1.0/order/battery/parameter/update"
         
-        print(f"→ POST {url}", file=sys.stderr)
+        _log(f"→ POST {url}")
         
         status_code, response = self.api.api_post_json(url, body, self.config.get('DEYE_TOKEN'))
         
@@ -557,13 +562,13 @@ class DeyCLI:
         """List all stations"""
         
         if not self.config.get('DEYE_TOKEN'):
-            print("[ERROR] Missing DEYE_TOKEN", file=sys.stderr)
+            _log("[ERROR] Missing DEYE_TOKEN")
             return EXIT_USAGE
         
         body = {}
         url = f"{self.config.get('DEYE_BASE_URL')}/v1.0/station/list"
         
-        print(f"→ POST {url}", file=sys.stderr)
+        _log(f"→ POST {url}")
         
         status_code, response = self.api.api_post_json(url, body, self.config.get('DEYE_TOKEN'))
         
@@ -580,10 +585,10 @@ class DeyCLI:
             station_id = args[0]
         
         if not self.config.get('DEYE_TOKEN'):
-            print("[ERROR] Missing DEYE_TOKEN", file=sys.stderr)
+            _log("[ERROR] Missing DEYE_TOKEN")
             return EXIT_USAGE
         if not station_id:
-            print("[ERROR] Missing station ID", file=sys.stderr)
+            _log("[ERROR] Missing station ID")
             return EXIT_USAGE
         
         if not self._validate_station_id(station_id):
@@ -592,7 +597,7 @@ class DeyCLI:
         body = {'stationId': int(station_id)}
         url = f"{self.config.get('DEYE_BASE_URL')}/v1.0/station/latest"
         
-        print(f"→ POST {url}", file=sys.stderr)
+        _log(f"→ POST {url}")
         
         status_code, response = self.api.api_post_json(url, body, self.config.get('DEYE_TOKEN'))
         
@@ -609,10 +614,10 @@ class DeyCLI:
             device_sn = args[0]
         
         if not self.config.get('DEYE_TOKEN'):
-            print("[ERROR] Missing DEYE_TOKEN", file=sys.stderr)
+            _log("[ERROR] Missing DEYE_TOKEN")
             return EXIT_USAGE
         if not device_sn:
-            print("[ERROR] Missing device serial number", file=sys.stderr)
+            _log("[ERROR] Missing device serial number")
             return EXIT_USAGE
         
         if not self._validate_device_sn(device_sn):
@@ -621,7 +626,7 @@ class DeyCLI:
         body = {'deviceList': [device_sn]}
         url = f"{self.config.get('DEYE_BASE_URL')}/v1.0/device/latest"
         
-        print(f"→ POST {url}", file=sys.stderr)
+        _log(f"→ POST {url}")
         
         status_code, response = self.api.api_post_json(url, body, self.config.get('DEYE_TOKEN'))
         
@@ -693,7 +698,7 @@ class DeyCLI:
         default_charge_current = parsed.default_charge_current or ''
 
         if not latitude or not longitude:
-            print("[ERROR] Missing --lat and --lon or DEYE_WEATHER_LAT/DEYE_WEATHER_LON", file=sys.stderr)
+            _log("[ERROR] Missing --lat and --lon or DEYE_WEATHER_LAT/DEYE_WEATHER_LON")
             return EXIT_USAGE
 
         if not self._validate_float_range('Latitude', latitude, -90, 90):
@@ -704,52 +709,52 @@ class DeyCLI:
         try:
             forecast_h = int(parsed.hours)
         except:
-            print(f"[ERROR] --hours must be a positive integer, got: '{parsed.hours}'", file=sys.stderr)
+            _log(f"[ERROR] --hours must be a positive integer, got: '{parsed.hours}'")
             return EXIT_USAGE
         if forecast_h < 1 or forecast_h > 48:
-            print(f"[ERROR] Forecast hours must be 1-48, got: {forecast_h}", file=sys.stderr)
+            _log(f"[ERROR] Forecast hours must be 1-48, got: {forecast_h}")
             return EXIT_USAGE
 
         try:
             cron_min = int(parsed.minute)
         except:
-            print(f"[ERROR] --minute must be 0-59, got: '{parsed.minute}'", file=sys.stderr)
+            _log(f"[ERROR] --minute must be 0-59, got: '{parsed.minute}'")
             return EXIT_USAGE
         if cron_min < 0 or cron_min > 59:
-            print(f"[ERROR] Cron minute must be 0-59, got: {cron_min}", file=sys.stderr)
+            _log(f"[ERROR] Cron minute must be 0-59, got: {cron_min}")
             return EXIT_USAGE
 
         try:
             low_charge = int(parsed.low_charge_current)
         except:
-            print(f"[ERROR] --low-charge-current must be a positive integer, got: '{parsed.low_charge_current}'", file=sys.stderr)
+            _log(f"[ERROR] --low-charge-current must be a positive integer, got: '{parsed.low_charge_current}'")
             return EXIT_USAGE
         if low_charge < 0 or low_charge > 200:
-            print(f"[ERROR] --low-charge-current must be 0-200, got: {low_charge}", file=sys.stderr)
+            _log(f"[ERROR] --low-charge-current must be 0-200, got: {low_charge}")
             return EXIT_USAGE
 
         if parsed.show_config:
-            print("================================================================================", file=sys.stderr)
-            print("              Current solar-charge-cron Configuration", file=sys.stderr)
-            print("================================================================================", file=sys.stderr)
-            print(f"  DEYE_WEATHER_LAT                  = {latitude}", file=sys.stderr)
-            print(f"  DEYE_WEATHER_LON                  = {longitude}", file=sys.stderr)
-            print(f"  DEYE_SOLAR_FORECAST_HOURS         = {parsed.hours} hours", file=sys.stderr)
-            print(f"  DEYE_SOLAR_MIN_RADIATION          = {parsed.min_radiation} W/m²", file=sys.stderr)
-            print(f"  DEYE_SOLAR_LOW_CHARGE_CURRENT     = {parsed.low_charge_current} A", file=sys.stderr)
-            print(f"  DEYE_SOLAR_DEFAULT_CHARGE_CURRENT = {default_charge_current or 'auto-detect'}", file=sys.stderr)
-            print(f"  DEYE_SOLAR_PEAK_START             = {parsed.peak_start or 'auto-detect'}", file=sys.stderr)
-            print(f"  DEYE_SOLAR_PEAK_END               = {parsed.peak_end or 'auto-detect'}", file=sys.stderr)
-            print(f"  DEYE_SOLAR_CRON_MINUTE            = {parsed.minute}", file=sys.stderr)
-            print(f"  DEYE_SOLAR_CRON_FILE              = {parsed.cron_file}", file=sys.stderr)
-            print(f"  DEYE_DEVICE_SN                    = {parsed.device_sn or 'not set'}", file=sys.stderr)
-            print("================================================================================", file=sys.stderr)
+            _log("================================================================================")
+            _log("              Current solar-charge-cron Configuration")
+            _log("================================================================================")
+            _log(f"  DEYE_WEATHER_LAT                  = {latitude}")
+            _log(f"  DEYE_WEATHER_LON                  = {longitude}")
+            _log(f"  DEYE_SOLAR_FORECAST_HOURS         = {parsed.hours} hours")
+            _log(f"  DEYE_SOLAR_MIN_RADIATION          = {parsed.min_radiation} W/m²")
+            _log(f"  DEYE_SOLAR_LOW_CHARGE_CURRENT     = {parsed.low_charge_current} A")
+            _log(f"  DEYE_SOLAR_DEFAULT_CHARGE_CURRENT = {default_charge_current or 'auto-detect'}")
+            _log(f"  DEYE_SOLAR_PEAK_START             = {parsed.peak_start or 'auto-detect'}")
+            _log(f"  DEYE_SOLAR_PEAK_END               = {parsed.peak_end or 'auto-detect'}")
+            _log(f"  DEYE_SOLAR_CRON_MINUTE            = {parsed.minute}")
+            _log(f"  DEYE_SOLAR_CRON_FILE              = {parsed.cron_file}")
+            _log(f"  DEYE_DEVICE_SN                    = {parsed.device_sn or 'not set'}")
+            _log("================================================================================")
 
         # Fetch weather forecast
         try:
             import requests as _requests
         except ImportError:
-            print("[ERROR] requests library required for solar-charge-cron", file=sys.stderr)
+            _log("[ERROR] requests library required for solar-charge-cron")
             return EXIT_DEP
 
         weather_url = (
@@ -758,7 +763,7 @@ class DeyCLI:
             f"&forecast_hours={forecast_h}&timezone=auto"
         )
 
-        print(f"→ GET {weather_url}", file=sys.stderr)
+        _log(f"→ GET {weather_url}")
 
         connect_timeout = int(self.config.get('DEYE_CONNECT_TIMEOUT', '10'))
         max_time = int(self.config.get('DEYE_MAX_TIME', '30'))
@@ -771,27 +776,27 @@ class DeyCLI:
                 resp = _requests.get(weather_url, timeout=(connect_timeout, max_time))
                 if resp.status_code >= 500 or resp.status_code == 429:
                     if attempt < retry_max:
-                        print(f"[ERROR] Transient weather API error: HTTP {resp.status_code}. "
-                              f"Retry {attempt + 1}/{retry_max} in {retry_delay}s.", file=sys.stderr)
+                        _log(f"[ERROR] Transient weather API error: HTTP {resp.status_code}. "
+                              f"Retry {attempt + 1}/{retry_max} in {retry_delay}s.")
                         time.sleep(retry_delay)
                         retry_delay *= 2
                         continue
                 if resp.status_code != 200:
-                    print(f"[ERROR] Weather API returned HTTP {resp.status_code}", file=sys.stderr)
+                    _log(f"[ERROR] Weather API returned HTTP {resp.status_code}")
                     return EXIT_API
                 weather_data = resp.json()
                 break
             except Exception as e:
                 if attempt < retry_max:
-                    print(f"[ERROR] Weather request failed: {e}. Retry {attempt + 1}/{retry_max} in {retry_delay}s.", file=sys.stderr)
+                    _log(f"[ERROR] Weather request failed: {e}. Retry {attempt + 1}/{retry_max} in {retry_delay}s.")
                     time.sleep(retry_delay)
                     retry_delay *= 2
                     continue
-                print(f"[ERROR] Failed to fetch weather forecast: {e}", file=sys.stderr)
+                _log(f"[ERROR] Failed to fetch weather forecast: {e}")
                 return EXIT_NETWORK
 
         if weather_data is None:
-            print("[ERROR] Unable to fetch weather forecast.", file=sys.stderr)
+            _log("[ERROR] Unable to fetch weather forecast.")
             return EXIT_NETWORK
 
         hourly = weather_data.get('hourly', {})
@@ -802,7 +807,7 @@ class DeyCLI:
         weather_codes = hourly.get('weathercode', [])
 
         if not times or not radiations:
-            print("[ERROR] Weather API response missing expected hourly fields.", file=sys.stderr)
+            _log("[ERROR] Weather API response missing expected hourly fields.")
             return EXIT_API
 
         # Build slot info
@@ -846,7 +851,7 @@ class DeyCLI:
                 if peak_end > 23:
                     peak_end = 23
                 peak_auto = True
-                print(f"ℹ Peak auto-detect: max radiation {max_rad_slot['radiation']:.0f} W/m² at {peak_hour}:00 → peak {peak_start}:00-{peak_end}:00", file=sys.stderr)
+                _log(f"ℹ Peak auto-detect: max radiation {max_rad_slot['radiation']:.0f} W/m² at {peak_hour}:00 → peak {peak_start}:00-{peak_end}:00")
             else:
                 peak_start = 12
                 peak_end = 14
@@ -854,22 +859,22 @@ class DeyCLI:
             try:
                 peak_start = int(parsed.peak_start) if parsed.peak_start else 12
             except:
-                print(f"[ERROR] --peak-start must be 0-23, got: '{parsed.peak_start}'", file=sys.stderr)
+                _log(f"[ERROR] --peak-start must be 0-23, got: '{parsed.peak_start}'")
                 return EXIT_USAGE
             if peak_start < 0 or peak_start > 23:
-                print(f"[ERROR] --peak-start must be 0-23, got: {peak_start}", file=sys.stderr)
+                _log(f"[ERROR] --peak-start must be 0-23, got: {peak_start}")
                 return EXIT_USAGE
 
             try:
                 peak_end = int(parsed.peak_end) if parsed.peak_end else 14
             except:
-                print(f"[ERROR] --peak-end must be 0-23, got: '{parsed.peak_end}'", file=sys.stderr)
+                _log(f"[ERROR] --peak-end must be 0-23, got: '{parsed.peak_end}'")
                 return EXIT_USAGE
             if peak_end < 0 or peak_end > 23:
-                print(f"[ERROR] --peak-end must be 0-23, got: {peak_end}", file=sys.stderr)
+                _log(f"[ERROR] --peak-end must be 0-23, got: {peak_end}")
                 return EXIT_USAGE
             if peak_end <= peak_start:
-                print(f"[ERROR] --peak-end ({peak_end}) must be greater than --peak-start ({peak_start})", file=sys.stderr)
+                _log(f"[ERROR] --peak-end ({peak_end}) must be greater than --peak-start ({peak_start})")
                 return EXIT_USAGE
 
         # Determine if this is a "solar day": at least 2 morning hours (before peak)
@@ -884,21 +889,21 @@ class DeyCLI:
         if not default_charge_current:
             device_sn = parsed.device_sn
             if not device_sn:
-                print("[ERROR] Cannot auto-detect default MAX_CHARGE_CURRENT without --device-sn or DEYE_DEVICE_SN.", file=sys.stderr)
-                print("[ERROR] Provide --default-charge-current explicitly, or configure DEYE_DEVICE_SN.", file=sys.stderr)
+                _log("[ERROR] Cannot auto-detect default MAX_CHARGE_CURRENT without --device-sn or DEYE_DEVICE_SN.")
+                _log("[ERROR] Provide --default-charge-current explicitly, or configure DEYE_DEVICE_SN.")
                 return EXIT_USAGE
             if not self.config.get('DEYE_TOKEN'):
-                print("[ERROR] Cannot auto-detect default MAX_CHARGE_CURRENT without DEYE_TOKEN.", file=sys.stderr)
-                print("[ERROR] Provide --default-charge-current explicitly, or configure DEYE_TOKEN.", file=sys.stderr)
+                _log("[ERROR] Cannot auto-detect default MAX_CHARGE_CURRENT without DEYE_TOKEN.")
+                _log("[ERROR] Provide --default-charge-current explicitly, or configure DEYE_TOKEN.")
                 return EXIT_USAGE
 
             battery_url = f"{self.config.get('DEYE_BASE_URL')}/v1.0/config/battery"
-            print(f"→ POST {battery_url} (detect default MAX_CHARGE_CURRENT)", file=sys.stderr)
+            _log(f"→ POST {battery_url} (detect default MAX_CHARGE_CURRENT)")
             status_code, battery_response = self.api.api_post_json(
                 battery_url, {'deviceSn': device_sn}, self.config.get('DEYE_TOKEN')
             )
             if status_code < 200 or status_code >= 300:
-                print("[ERROR] Failed to retrieve battery config for auto-detection.", file=sys.stderr)
+                _log("[ERROR] Failed to retrieve battery config for auto-detection.")
                 return EXIT_API
 
             detected = (
@@ -906,7 +911,7 @@ class DeyCLI:
                 (battery_response.get('data', {}) or {}).get('maxChargeCurrent')
             )
             if not detected:
-                print("[ERROR] Unable to detect default MAX_CHARGE_CURRENT from config-battery response.", file=sys.stderr)
+                _log("[ERROR] Unable to detect default MAX_CHARGE_CURRENT from config-battery response.")
                 return EXIT_API
 
             default_charge_current = str(detected)
@@ -983,7 +988,7 @@ class DeyCLI:
                 print(fmt.format(*row))
 
         if not is_solar_day:
-            print(f"ℹ Giornata nuvolosa: solo {morning_sunny_count} ore solari mattutine (minimo 2). Nessuna modulazione.", file=sys.stderr)
+            _log(f"ℹ Giornata nuvolosa: solo {morning_sunny_count} ore solari mattutine (minimo 2). Nessuna modulazione.")
 
         # Script path for cron commands (absolute path of the running script)
         script_path = os.path.abspath(__file__)
@@ -1060,7 +1065,7 @@ class DeyCLI:
         if cron_lines:
             for line in cron_lines:
                 cron_content += line + "\n"
-            print(f"✔ {modulated_count} ore modulate (mattina), ripristino a {default_charge}A alle {peak_start}:00.", file=sys.stderr)
+            _log(f"✔ {modulated_count} ore modulate (mattina), ripristino a {default_charge}A alle {peak_start}:00.")
         else:
             cron_content += f"# Nessuna modulazione necessaria.\n"
 
@@ -1073,7 +1078,7 @@ class DeyCLI:
             f.write(cron_content)
         os.chmod(parsed.cron_file, 0o600)
 
-        print(f"✔ Cron file generated: {parsed.cron_file}", file=sys.stderr)
+        _log(f"✔ Cron file generated: {parsed.cron_file}")
 
         if parsed.print_crontab:
             print(cron_content)
@@ -1081,12 +1086,12 @@ class DeyCLI:
         if parsed.install_crontab:
             ret = os.system(f"crontab '{parsed.cron_file}'")
             if ret == 0:
-                print(f"✔ Crontab installed: crontab {parsed.cron_file}", file=sys.stderr)
+                _log(f"✔ Crontab installed: crontab {parsed.cron_file}")
             else:
-                print(f"✘ Failed to install crontab (exit code {ret})", file=sys.stderr)
+                _log(f"✘ Failed to install crontab (exit code {ret})")
                 return EXIT_API
         else:
-            print(f"  Install with: crontab {parsed.cron_file}", file=sys.stderr)
+            _log(f"  Install with: crontab {parsed.cron_file}")
 
         return EXIT_OK
     
