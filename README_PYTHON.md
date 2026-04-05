@@ -104,35 +104,52 @@ Parametri supportati:
 
 Questo comando viene eseguito alle prime ore della giornata. Analizza le previsioni meteo
 e genera un crontab che modula `MAX_CHARGE_CURRENT` ora per ora:
-- **Mattina** (alba → peak_start): valori bassi che salgono gradualmente, inversamente
-  proporzionali alla radiazione prevista. La batteria si carica lentamente e l'energia
-  in eccesso viene esportata verso la rete.
-- **Pranzo** (peak_start → peak_end): carica piena (default). La batteria si riempie.
-- **Pomeriggio** (dopo peak_end): carica piena (default).
+- **Mattina** (prima fascia soleggiata → peak): rampa graduale da corrente minima a corrente di default.
+- **Picco** (peak_start → peak_end): carica piena (default).
+- **Dopo picco**: carica piena (default).
 - **Giornata nuvolosa**: nessuna modulazione, default tutto il giorno.
+
+La rampa usa la formula:
+
+`charge = low + (max - low) * t^exp`
+
+dove `t` va da `0` a `1`, ed `exp` e' controllato da `--ramp-exponent`.
+
+Comportamento tipico di `--ramp-exponent`:
+- `1`: lineare
+- `2`: piu' dolce
+- `4`: default (piu' piatta al mattino, salita verso il picco)
+- `6+`: molto piatta, salita finale accentuata
+
+Se `--peak-start/--peak-end` non sono specificati, il picco viene auto-rilevato
+dall'ora con massima `direct_radiation` prevista.
 
 ```bash
 ./deyecli.py solar-charge-cron \
   --lat 44.0637 \
   --lon 12.4525 \
-  --low-charge-current 20 \
-  --peak-start 12 \
-  --peak-end 14 \
+  --low-charge-current 5 \
+  --ramp-exponent 4 \
   --print-slots \
   --dry-run
 ```
 
 Opzioni:
-- `--lat`, `--lon`: Coordinate GPS (obbligatorio)
+- `--lat`, `--lon`: Coordinate GPS (obbligatorio, oppure `DEYE_WEATHER_LAT/LON`)
 - `--hours`: Ore di forecast (default: 12)
 - `--min-radiation`: Radiazione minima W/m² per considerare un'ora "soleggiata" (default: 200)
-- `--low-charge-current`: Corrente minima nelle ore mattutine (default: 20 A)
+- `--low-charge-current`: Corrente minima nelle ore mattutine (default: 5 A)
 - `--default-charge-current`: Corrente di carica di default/massima (auto-detect se omesso)
-- `--peak-start`: Ora inizio carica piena (default: 12)
-- `--peak-end`: Ora fine carica piena (default: 14)
+- `--peak-start`: Ora inizio carica piena (auto-detect se omesso)
+- `--peak-end`: Ora fine carica piena (auto-detect se omesso)
+- `--ramp-exponent`: Esponente curva rampa (default: 4)
+- `--minute`: Minuto cron (default: 5)
+- `--cron-file`: Path file cron di output
 - `--print-slots`: Mostrare tabella slot orari con corrente calcolata
+- `--print-crontab`: Stampare il contenuto crontab generato
 - `--dry-run`: Mostrare contenuto cron senza scrivere file
 - `--show-config`: Mostrare configurazione in uso
+- `--install-crontab`: Installare automaticamente il crontab generato
 
 #### 9. Mostrare configurazione
 
@@ -181,10 +198,15 @@ DEYE_EMAIL="your@email.com"
 DEYE_TOKEN="bearer-token-xxx"
 DEYE_WEATHER_LAT="44.0637"
 DEYE_WEATHER_LON="12.4525"
-DEYE_SOLAR_MIN_RADIATION="250"
-DEYE_SOLAR_LOW_CHARGE_CURRENT="25"
-DEYE_SOLAR_PEAK_START="12"
-DEYE_SOLAR_PEAK_END="14"
+DEYE_SOLAR_FORECAST_HOURS="12"
+DEYE_SOLAR_MIN_RADIATION="200"
+DEYE_SOLAR_LOW_CHARGE_CURRENT="5"
+DEYE_SOLAR_DEFAULT_CHARGE_CURRENT=""
+DEYE_SOLAR_PEAK_START=""
+DEYE_SOLAR_PEAK_END=""
+DEYE_SOLAR_RAMP_EXPONENT="4"
+DEYE_SOLAR_CRON_MINUTE="5"
+DEYE_SOLAR_CRON_FILE="~/.config/deyecli/solar-charge.cron"
 ```
 
 ### Variabili d'ambiente
@@ -324,13 +346,11 @@ EOF
 ./deyecli.py solar-charge-cron \
   --lat 44.0637 \
   --lon 12.4525 \
-  --low-charge-current 15 \
-  --peak-start 12 \
-  --peak-end 14 \
-  --print-slots
-
-# Installare crontab
-crontab ~/.config/deyecli/solar-charge.cron
+  --low-charge-current 5 \
+  --ramp-exponent 6 \
+  --print-slots \
+  --print-crontab \
+  --install-crontab
 ```
 
 ### 3. Usare con Home Assistant
@@ -361,7 +381,7 @@ pip install requests
 1. **Nessun `jq` richiesto**: JSON parsing nativo Python
 2. **Nessun `curl` richiesto**: Usa `requests` (o fallback a `curl`)
 3. **Server API integrato**: No bisogno di server separato
-4. **`solar-charge-cron --print-slots`**: Tabella completa con descrizioni meteo in italiano
+4. **`solar-charge-cron` avanzato**: auto-detect peak, rampa configurabile (`--ramp-exponent`), `--print-crontab` e `--install-crontab`
 
 ## Troubleshooting
 

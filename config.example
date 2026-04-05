@@ -51,8 +51,8 @@ DEYE_TOKEN=
 DEYE_DEVICE_SN=
 
 # ---------------------------------------------------------------------------
-# Station ID (integer) used by station-latest / station-history commands.
-# Obtain it by running:  deyecli.sh station-list
+# Station ID (integer) used by station-latest commands.
+# Obtain it by running:  deyecli.py station-list
 # Look for the "id" field in the returned stationList array.
 # Can be overridden per-call with --station-id <id> or a positional argument.
 # ---------------------------------------------------------------------------
@@ -64,3 +64,23 @@ DEYE_STATION_ID=
 # Equivalent CLI flag: --print-query
 # ---------------------------------------------------------------------------
 DEYE_PRINT_QUERY=false
+
+# ---------------------------------------------------------------------------
+# Weather location for solar-charge-cron
+# Required if you don't pass --lat/--lon on each call.
+# ---------------------------------------------------------------------------
+DEYE_WEATHER_LAT=
+DEYE_WEATHER_LON=
+
+# ---------------------------------------------------------------------------
+# Solar charge modulation defaults (used by solar-charge-cron)
+# ---------------------------------------------------------------------------
+DEYE_SOLAR_FORECAST_HOURS=12
+DEYE_SOLAR_MIN_RADIATION=200
+DEYE_SOLAR_LOW_CHARGE_CURRENT=5
+DEYE_SOLAR_DEFAULT_CHARGE_CURRENT=
+DEYE_SOLAR_PEAK_START=
+DEYE_SOLAR_PEAK_END=
+DEYE_SOLAR_RAMP_EXPONENT=4
+DEYE_SOLAR_CRON_MINUTE=5
+DEYE_SOLAR_CRON_FILE=~/.config/deyecli/solar-charge.cron

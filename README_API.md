@@ -287,7 +287,7 @@ curl -X POST "http://localhost:8000/api/battery/parameter/update" \
 
 **Endpoint:** `POST /api/solar-charge-cron`
 
-**Description:** Generate cron entries to reduce charging during sunny hours
+**Description:** Generate date-scoped cron entries to modulate battery charge current during sunny morning hours.
 
 **Request:**
 ```bash
@@ -298,7 +298,14 @@ curl -X POST "http://localhost:8000/api/solar-charge-cron" \
     "lat": "44.0637",
     "lon": "12.4525",
     "hours": "12",
-    "low_charge_current": "20",
+    "min_radiation": "200",
+    "low_charge_current": "5",
+    "default_charge_current": "50",
+    "peak_start": "12",
+    "peak_end": "14",
+    "minute": "5",
+    "cron_file": "~/.config/deyecli/solar-charge.cron",
+    "print_slots": true,
     "device_sn": "DEVICE_SERIAL_NUMBER",
     "dry_run": true
   }'
@@ -306,11 +313,20 @@ curl -X POST "http://localhost:8000/api/solar-charge-cron" \
 
 **Optional Parameters:**
 - `hours`: Forecast window in hours (default: 12)
-- `cloud_max`: Max cloud cover 0-100% (default: 70)
 - `min_radiation`: Min direct radiation W/m² (default: 200)
+- `low_charge_current`: Morning minimum charge current in A (default: 5)
+- `default_charge_current`: Default/peak charge current (auto-detected if omitted)
+- `peak_start`: Peak start hour (0-23, default fallback: 12)
+- `peak_end`: Peak end hour (0-23, default fallback: 14)
+- `minute`: Cron minute for generated entries (default: 5)
+- `cron_file`: Output cron file path
+- `device_sn`: Required if `default_charge_current` is omitted (used for auto-detection)
 - `print_slots`: Show weather table (true/false)
-- `restore_default_charge_current`: Restore default current after sunny hours (true/false)
 - `dry_run`: Don't write file, just show content (true/false)
+
+**Notes:**
+- Current HTTP endpoint mapping does not expose all CLI-only flags (for example `ramp_exponent`, `print_crontab`, `install_crontab`, `show_config`).
+- Use CLI directly when these flags are needed.
 
 **Response:**
 ```json
@@ -332,6 +348,8 @@ The API server automatically loads configuration from:
 
 1. **Environment variables** (e.g., `DEYE_TOKEN`, `DEYE_APP_ID`)
 2. **Config file** at `~/.config/deyecli/config` (or path specified in `DEYE_CONFIG`)
+
+When both are present, config file values override environment variables. CLI/API request values override both.
 
 ### Config File Example
 

@@ -46,7 +46,7 @@ ln -s "$PWD/deyecli.py" ~/.local/bin/deyecli
 The script reads parameters from multiple sources, in descending order of precedence:
 
 ```
-CLI flag  >  environment variable  >  config file
+CLI flag  >  config file  >  environment variable  >  built-in defaults
 ```
 
 ### Config file
@@ -85,6 +85,21 @@ DEYE_TOKEN=
 
 # Default device serial number used by config commands
 DEYE_DEVICE_SN=
+
+# Weather location for solar-charge-cron
+DEYE_WEATHER_LAT=44.0637
+DEYE_WEATHER_LON=12.4525
+
+# Solar charge modulation defaults
+DEYE_SOLAR_FORECAST_HOURS=12
+DEYE_SOLAR_MIN_RADIATION=200
+DEYE_SOLAR_LOW_CHARGE_CURRENT=5
+DEYE_SOLAR_DEFAULT_CHARGE_CURRENT=
+DEYE_SOLAR_PEAK_START=
+DEYE_SOLAR_PEAK_END=
+DEYE_SOLAR_RAMP_EXPONENT=4
+DEYE_SOLAR_CRON_MINUTE=5
+DEYE_SOLAR_CRON_FILE=~/.config/deyecli/solar-charge.cron
 ```
 
 > **Security:** The file is read with a line-by-line parser, without `eval` or `source`.
@@ -304,6 +319,74 @@ Sends a control command to set the value of a single battery parameter. The call
 
 `connectionStatus`: `0` = Offline, `1` = Online  
 An `orderId` other than `null` confirms the command has been queued. When the device comes online, it executes it and updates the parameters.
+
+---
+
+### `solar-charge-cron` — Generate smart charge modulation crontab
+
+Analyzes Open-Meteo hourly forecast and generates a day-specific crontab to modulate `MAX_CHARGE_CURRENT` in the morning.
+
+Goal: keep battery charging slower in early sunny hours, so more production can be exported to the grid before peak hours.
+
+How it works:
+
+1. Detects sunny morning slots from `is_day`, `direct_radiation`, and weather code.
+2. Auto-detects peak window from forecast hour with max direct radiation (unless manually forced).
+3. Applies a ramp before peak:
+
+  `charge = low + (max - low) * t^exp`
+
+  where `t` goes from 0 to 1 and `exp` is `--ramp-exponent`.
+4. During peak hours, restores full/default charge current.
+5. Writes cron entries with date guard and optional direct install via `crontab`.
+
+Curve behavior (`--ramp-exponent`):
+
+- `1` = linear
+- `2` = gentle early slope, later acceleration
+- `4` = default (flatter morning, steeper near peak)
+- `6+` = very flat, sharp rise near peak
+
+Examples:
+
+```bash
+# Preview computed slots and generated cron (without writing file)
+./deyecli.py solar-charge-cron --print-slots --dry-run
+
+# Generate cron file and print full content
+./deyecli.py solar-charge-cron --print-crontab
+
+# Install generated crontab immediately
+./deyecli.py solar-charge-cron --install-crontab
+
+# Use a flatter curve to delay battery fill more aggressively
+./deyecli.py solar-charge-cron --ramp-exponent 6 --install-crontab
+```
+
+Main options:
+
+| Option | Description |
+|--------|-------------|
+| `--lat`, `--lon` | Forecast coordinates (fallback: `DEYE_WEATHER_LAT/LON`) |
+| `--hours` | Forecast horizon (1-48) |
+| `--min-radiation` | Radiation threshold for sunny slots (W/m²) |
+| `--low-charge-current` | Morning minimum current (A) |
+| `--default-charge-current` | Default/peak current (A), auto-detected if omitted |
+| `--peak-start`, `--peak-end` | Peak window override (hour, 0-23); auto-detected if omitted |
+| `--ramp-exponent` | Ramp curve exponent (`DEYE_SOLAR_RAMP_EXPONENT`, default `4`) |
+| `--minute` | Cron minute for generated entries |
+| `--cron-file` | Output cron file path |
+| `--print-slots` | Print weather/decision table |
+| `--print-crontab` | Print generated cron content after write |
+| `--dry-run` | Print cron to stdout without writing file |
+| `--show-config` | Print effective solar-charge-cron config |
+| `--install-crontab` | Install generated cron with `crontab <file>` |
+
+Notes:
+
+- Generated cron commands read config via `DEYE_CONFIG='<config-file>'`.
+- `--device-sn` is not required in generated cron lines: it is read from `DEYE_DEVICE_SN` in config.
+- Command logs are appended to `/tmp/deyecli.log`.
 
 ---
 
