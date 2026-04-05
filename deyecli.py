@@ -643,32 +643,32 @@ class DeyCLI:
         On cloudy days, keep default all day (no modulation).
         """
 
-        # Italian weather code descriptions
+        # Weather code descriptions
         WEATHER_DESCRIPTIONS = {
-            0:  "Cielo sereno",
-            1:  "Prevalentemente sereno",
-            2:  "Parzialmente nuvoloso",
-            3:  "Coperto",
-            45: "Nebbia",
-            48: "Nebbia",
-            51: "Pioggia leggera",
-            53: "Pioggia moderata",
-            55: "Pioggia forte",
-            61: "Pioggia leggera",
-            63: "Pioggia moderata",
-            65: "Pioggia forte",
-            71: "Neve leggera",
-            73: "Neve moderata",
-            75: "Neve forte",
-            77: "Granuli di neve",
-            80: "Rovesci leggeri",
-            81: "Rovesci moderati",
-            82: "Rovesci forti",
-            85: "Rovesci di neve leggeri",
-            86: "Rovesci di neve forti",
-            95: "Temporale",
-            96: "Temporale con grandine",
-            99: "Temporale con grandine forte",
+            0:  "Clear sky",
+            1:  "Mainly clear",
+            2:  "Partly cloudy",
+            3:  "Overcast",
+            45: "Fog",
+            48: "Fog",
+            51: "Light rain",
+            53: "Moderate rain",
+            55: "Heavy rain",
+            61: "Light rain",
+            63: "Moderate rain",
+            65: "Heavy rain",
+            71: "Light snow",
+            73: "Moderate snow",
+            75: "Heavy snow",
+            77: "Snow grains",
+            80: "Light showers",
+            81: "Moderate showers",
+            82: "Heavy showers",
+            85: "Light snow showers",
+            86: "Heavy snow showers",
+            95: "Thunderstorm",
+            96: "Thunderstorm with hail",
+            99: "Severe thunderstorm with hail",
         }
 
         parser = argparse.ArgumentParser(add_help=False)
@@ -972,8 +972,8 @@ class DeyCLI:
         # Print full table
         if parsed.print_slots:
             headers = [
-                'ora_locale', 'is_day', 'cloudcover_pct',
-                'weathercode', 'descrizione', 'direct_rad_w/m2', 'sunny_slot',
+                'local_time', 'is_day', 'cloudcover_pct',
+                'weathercode', 'description', 'direct_rad_w/m2', 'sunny_slot',
                 'charge_A'
             ]
             rows = []
@@ -986,7 +986,7 @@ class DeyCLI:
                     str(s['weathercode']),
                     s['description'],
                     str(s['radiation']),
-                    'SI' if s['sunny'] else 'NO',
+                    'YES' if s['sunny'] else 'NO',
                     str(s['charge_current']),
                 ])
 
@@ -1001,7 +1001,7 @@ class DeyCLI:
                 print(fmt.format(*row))
 
         if not is_solar_day:
-            _log(f"ℹ Giornata nuvolosa: solo {morning_sunny_count} ore solari mattutine (minimo 2). Nessuna modulazione.")
+            _log(f"ℹ Cloudy day: only {morning_sunny_count} sunny morning hours (minimum 2). No modulation.")
 
         # Script path for cron commands (absolute path of the running script)
         script_path = os.path.abspath(__file__)
@@ -1052,7 +1052,7 @@ class DeyCLI:
             restore_key = f"{first_date}-{peak_start}"
             if restore_key not in seen:
                 cron_lines.append(
-                    f"# Ripristino MAX_CHARGE_CURRENT a {default_charge} A (inizio peak)\n"
+                    f"# Restore MAX_CHARGE_CURRENT to {default_charge} A (peak start)\n"
                     f"{cron_min} {peak_start} {day_int} {month_int} * "
                     f'[ "$(date +\\%Y-\\%m-\\%d)" = "{first_date}" ] && '
                     f"DEYE_CONFIG='{config_path}' '{script_path}' "
@@ -1078,9 +1078,9 @@ class DeyCLI:
         if cron_lines:
             for line in cron_lines:
                 cron_content += line + "\n"
-            _log(f"✔ {modulated_count} ore modulate (mattina), ripristino a {default_charge}A alle {peak_start}:00.")
+            _log(f"✔ {modulated_count} modulated hours (morning), restoring to {default_charge}A at {peak_start}:00.")
         else:
-            cron_content += f"# Nessuna modulazione necessaria.\n"
+            cron_content += f"# No modulation required.\n"
 
         if parsed.dry_run:
             print(cron_content)
@@ -1407,23 +1407,23 @@ def main():
     parser = argparse.ArgumentParser(
         description='Deye CLI - Deye Cloud API CLI and HTTP API Server',
         epilog='''
-Solar Charge Cron - Funzionamento:
-  Il comando solar-charge-cron analizza le previsioni meteo (Open-Meteo) e
-  genera un crontab che modula MAX_CHARGE_CURRENT ora per ora durante la
-  mattina, in modo che la batteria si carichi lentamente e l'energia in
-  eccesso venga esportata verso la rete.
+Solar Charge Cron - How it works:
+    The solar-charge-cron command analyzes weather forecasts (Open-Meteo) and
+    generates a crontab that modulates MAX_CHARGE_CURRENT hour by hour during
+    the morning, so the battery charges more slowly and excess energy can be
+    exported to the grid.
 
-  La rampa mattutina segue una curva esponenziale: charge = low + (max - low) * t^exp
-  dove t va da 0 (prima ora soleggiata) a 1 (inizio peak).
+    The morning ramp follows an exponential curve: charge = low + (max - low) * t^exp
+    where t goes from 0 (first sunny hour) to 1 (peak start).
 
-  --ramp-exponent controlla la forma della curva:
-    1   = lineare (sale uniformemente)
-    2   = quadratica (sale piano, poi accelera)
-    4   = quartica (resta bassa a lungo, sale tardi) [default]
-    6+  = molto piatta (quasi tutto al minimo, impennata finale)
+    --ramp-exponent controls the shape of the curve:
+        1   = linear (steady increase)
+        2   = quadratic (slow increase, then acceleration)
+        4   = quartic (stays low longer, rises later) [default]
+        6+  = very flat (almost all at minimum, sharp final rise)
 
-  Il peak (ore di carica piena) viene auto-rilevato dall'ora con massima
-  radiazione solare prevista. Puo' essere forzato con --peak-start/--peak-end.
+    Peak hours (full charge) are auto-detected from the hour with the highest
+    forecast solar radiation. They can be forced with --peak-start/--peak-end.
 
 Examples:
   # Obtain a token
@@ -1435,10 +1435,10 @@ Examples:
   # List stations
   deyecli.py station-list
 
-  # Generate solar charge cron (dry-run con stampa slot)
+    # Generate solar charge cron (dry-run with slot table)
   deyecli.py solar-charge-cron --print-slots --dry-run
 
-  # Generate e installa crontab con curva piatta
+    # Generate and install crontab with flatter curve
   deyecli.py solar-charge-cron --ramp-exponent 6 --install-crontab
 
   # Start API server
@@ -1489,24 +1489,24 @@ Examples:
     solar_parser = subparsers.add_parser('solar-charge-cron',
         help='Generate solar charge cron',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='''Funzionamento:
-  Analizza le previsioni meteo (Open-Meteo) e genera un crontab che modula
-  MAX_CHARGE_CURRENT ora per ora durante la mattina, in modo che la batteria
-  si carichi lentamente e l'energia in eccesso venga esportata verso la rete.
+                epilog='''How it works:
+    Analyzes weather forecasts (Open-Meteo) and generates a crontab that
+    modulates MAX_CHARGE_CURRENT hour by hour during the morning, so the
+    battery charges more slowly and excess energy can be exported to the grid.
 
-  La rampa mattutina segue una curva esponenziale: charge = low + (max - low) * t^exp
-  dove t va da 0 (prima ora soleggiata) a 1 (inizio peak).
+    The morning ramp follows an exponential curve: charge = low + (max - low) * t^exp
+    where t goes from 0 (first sunny hour) to 1 (peak start).
 
-  --ramp-exponent controlla la forma della curva:
-    1   = lineare (sale uniformemente)
-    2   = quadratica (sale piano, poi accelera)
-    4   = quartica (resta bassa a lungo, sale tardi) [default]
-    6+  = molto piatta (quasi tutto al minimo, impennata finale)
+    --ramp-exponent controls the shape of the curve:
+        1   = linear (steady increase)
+        2   = quadratic (slow increase, then acceleration)
+        4   = quartic (stays low longer, rises later) [default]
+        6+  = very flat (almost all at minimum, sharp final rise)
 
-  Il peak (ore di carica piena) viene auto-rilevato dall'ora con massima
-  radiazione solare prevista. Puo' essere forzato con --peak-start/--peak-end.
+    Peak hours (full charge) are auto-detected from the hour with the highest
+    forecast solar radiation. They can be forced with --peak-start/--peak-end.
 
-Esempio:
+Example:
   deyecli.py solar-charge-cron --ramp-exponent 2 --print-slots --dry-run
   deyecli.py solar-charge-cron --ramp-exponent 6 --install-crontab
 ''')
