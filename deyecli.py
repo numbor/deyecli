@@ -1407,6 +1407,24 @@ def main():
     parser = argparse.ArgumentParser(
         description='Deye CLI - Deye Cloud API CLI and HTTP API Server',
         epilog='''
+Solar Charge Cron - Funzionamento:
+  Il comando solar-charge-cron analizza le previsioni meteo (Open-Meteo) e
+  genera un crontab che modula MAX_CHARGE_CURRENT ora per ora durante la
+  mattina, in modo che la batteria si carichi lentamente e l'energia in
+  eccesso venga esportata verso la rete.
+
+  La rampa mattutina segue una curva esponenziale: charge = low + (max - low) * t^exp
+  dove t va da 0 (prima ora soleggiata) a 1 (inizio peak).
+
+  --ramp-exponent controlla la forma della curva:
+    1   = lineare (sale uniformemente)
+    2   = quadratica (sale piano, poi accelera)
+    4   = quartica (resta bassa a lungo, sale tardi) [default]
+    6+  = molto piatta (quasi tutto al minimo, impennata finale)
+
+  Il peak (ore di carica piena) viene auto-rilevato dall'ora con massima
+  radiazione solare prevista. Puo' essere forzato con --peak-start/--peak-end.
+
 Examples:
   # Obtain a token
   deyecli.py token --app-id xxx --app-secret yyy --email me@example.com --password mypass
@@ -1417,8 +1435,11 @@ Examples:
   # List stations
   deyecli.py station-list
 
-  # Generate solar charge cron
-  deyecli.py solar-charge-cron --lat 44.0637 --lon 12.4525
+  # Generate solar charge cron (dry-run con stampa slot)
+  deyecli.py solar-charge-cron --print-slots --dry-run
+
+  # Generate e installa crontab con curva piatta
+  deyecli.py solar-charge-cron --ramp-exponent 6 --install-crontab
 
   # Start API server
   deyecli.py api --host 0.0.0.0 --port 8000
