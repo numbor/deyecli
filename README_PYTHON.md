@@ -2,48 +2,48 @@
 
 ## Overview
 
-`deyecli.py` è il programma principale per interagire con le API Deye Cloud, con server HTTP REST integrato.
+`deyecli.py` is the main program used to interact with the Deye Cloud APIs, with an integrated HTTP REST server.
 
-### Caratteristiche principali
+### Key Features
 
-✅ **Tutti i comandi Deye Cloud**
-- Token, config batteria, config sistema, aggiornamento parametri
-- Lista stazioni e dati real-time
-- Nessun `jq`, `curl` o `bash` richiesto
+✅ **All Deye Cloud commands**
+- Token, battery config, system config, parameter updates
+- Station list and real-time data
+- No `jq`, `curl`, or `bash` required
 
-✅ **Server API HTTP integrato**
-- Endpoints REST per tutti i comandi
-- Supporto autenticazione Bearer token
-- Configurazione porta e indirizzo
+✅ **Integrated HTTP API server**
+- REST endpoints for all commands
+- Bearer token authentication support
+- Configurable host and port
 
-✅ **Gestione configurazione avanzata**
-- File di configurazione XDG-compliant
-- Variabili d'ambiente
-- Argomenti CLI (con precedenza)
-- Auto-rilevamento e save token
+✅ **Advanced configuration management**
+- XDG-compliant configuration file
+- Environment variables
+- CLI arguments (with precedence)
+- Auto-detection and token saving
 
-✅ **Funzionalità complete**
-- Hash SHA256 password
-- Retry logic con backoff esponenziale
-- Timeout configurabili
+✅ **Complete functionality**
+- SHA256 password hashing
+- Retry logic with exponential backoff
+- Configurable timeouts
 - Debug mode
-- Forecast solare con Open-Meteo
+- Solar forecast via Open-Meteo
 
-## Installazione
+## Installation
 
 ```bash
-# Rendere eseguibile
+# Make executable
 chmod +x deyecli.py
 
-# Installare dipendenze opzionali (consigliato)
+# Install optional dependencies (recommended)
 pip install requests
 ```
 
-## Uso
+## Usage
 
-### Comandi CLI
+### CLI Commands
 
-#### 1. Ottenere token di accesso
+#### 1. Get access token
 
 ```bash
 ./deyecli.py token \
@@ -53,21 +53,21 @@ pip install requests
   --password yourpassword
 ```
 
-Token viene salvato automaticamente in: `~/.config/deyecli/config`
+The token is automatically saved to: `~/.config/deyecli/config`
 
-#### 2. Leggere configurazione batteria
+#### 2. Read battery configuration
 
 ```bash
 ./deyecli.py config-battery DEVICE_SN
 ```
 
-#### 3. Leggere configurazione sistema
+#### 3. Read system configuration
 
 ```bash
 ./deyecli.py config-system DEVICE_SN
 ```
 
-#### 4. Aggiornare parametri batteria
+#### 4. Update battery parameters
 
 ```bash
 ./deyecli.py battery-parameter-update \
@@ -76,53 +76,53 @@ Token viene salvato automaticamente in: `~/.config/deyecli/config`
   --device-sn DEVICE_SN
 ```
 
-Parametri supportati:
+Supported parameters:
 - `MAX_CHARGE_CURRENT`: 0-200 (A)
 - `MAX_DISCHARGE_CURRENT`: 0-200 (A)
 - `GRID_CHARGE_AMPERE`: 0-100 (A)
 - `BATT_LOW`: 0-100 (%)
 
-#### 5. Listare stazioni
+#### 5. List stations
 
 ```bash
 ./deyecli.py station-list
 ```
 
-#### 6. Ottenere dati recenti stazione
+#### 6. Get latest station data
 
 ```bash
 ./deyecli.py station-latest STATION_ID
 ```
 
-#### 7. Ottenere dati recenti dispositivo
+#### 7. Get latest device data
 
 ```bash
 ./deyecli.py device-latest DEVICE_SN
 ```
 
-#### 8. Generare cron per modulazione carica solare
+#### 8. Generate cron for solar charge modulation
 
-Questo comando viene eseguito alle prime ore della giornata. Analizza le previsioni meteo
-e genera un crontab che modula `MAX_CHARGE_CURRENT` ora per ora:
-- **Mattina** (prima fascia soleggiata → peak): rampa graduale da corrente minima a corrente di default.
-- **Picco** (peak_start → peak_end): carica piena (default).
-- **Dopo picco**: carica piena (default).
-- **Giornata nuvolosa**: nessuna modulazione, default tutto il giorno.
+This command is intended to run early in the day. It analyzes weather forecasts
+and generates a crontab that modulates `MAX_CHARGE_CURRENT` hour by hour:
+- **Morning** (first sunny slot → peak): gradual ramp from low current to default current.
+- **Peak** (peak_start → peak_end): full charge (default).
+- **After peak**: full charge (default).
+- **Cloudy day**: no modulation, default current all day.
 
-La rampa usa la formula:
+The ramp uses this formula:
 
 `charge = low + (max - low) * t^exp`
 
-dove `t` va da `0` a `1`, ed `exp` e' controllato da `--ramp-exponent`.
+where `t` goes from `0` to `1`, and `exp` is controlled by `--ramp-exponent`.
 
-Comportamento tipico di `--ramp-exponent`:
-- `1`: lineare
-- `2`: piu' dolce
-- `4`: default (piu' piatta al mattino, salita verso il picco)
-- `6+`: molto piatta, salita finale accentuata
+Typical `--ramp-exponent` behavior:
+- `1`: linear
+- `2`: smoother
+- `4`: default (flatter in the morning, steeper near peak)
+- `6+`: very flat, strong final ramp-up
 
-Se `--peak-start/--peak-end` non sono specificati, il picco viene auto-rilevato
-dall'ora con massima `direct_radiation` prevista.
+If `--peak-start/--peak-end` are not provided, peak hours are auto-detected
+from the hour with maximum forecasted `direct_radiation`.
 
 ```bash
 ./deyecli.py solar-charge-cron \
@@ -134,63 +134,63 @@ dall'ora con massima `direct_radiation` prevista.
   --dry-run
 ```
 
-Opzioni:
-- `--lat`, `--lon`: Coordinate GPS (obbligatorio, oppure `DEYE_WEATHER_LAT/LON`)
-- `--hours`: Ore di forecast (default: 12)
-- `--min-radiation`: Radiazione minima W/m² per considerare un'ora "soleggiata" (default: 200)
-- `--low-charge-current`: Corrente minima nelle ore mattutine (default: 5 A)
-- `--default-charge-current`: Corrente di carica di default/massima (auto-detect se omesso)
-- `--peak-start`: Ora inizio carica piena (auto-detect se omesso)
-- `--peak-end`: Ora fine carica piena (auto-detect se omesso)
-- `--ramp-exponent`: Esponente curva rampa (default: 4)
-- `--minute`: Minuto cron (default: 5)
-- `--cron-file`: Path file cron di output
-- `--print-slots`: Mostrare tabella slot orari con corrente calcolata
-- `--print-crontab`: Stampare il contenuto crontab generato
-- `--dry-run`: Mostrare contenuto cron senza scrivere file
-- `--show-config`: Mostrare configurazione in uso
-- `--install-crontab`: Installare automaticamente il crontab generato
+Options:
+- `--lat`, `--lon`: GPS coordinates (required, or set `DEYE_WEATHER_LAT/LON`)
+- `--hours`: Forecast hours (default: 12)
+- `--min-radiation`: Minimum radiation W/m2 to consider an hour "sunny" (default: 200)
+- `--low-charge-current`: Minimum morning current (default: 5 A)
+- `--default-charge-current`: Default/maximum charge current (auto-detect if omitted)
+- `--peak-start`: Peak charge start hour (auto-detect if omitted)
+- `--peak-end`: Peak charge end hour (auto-detect if omitted)
+- `--ramp-exponent`: Ramp curve exponent (default: 4)
+- `--minute`: Cron minute (default: 5)
+- `--cron-file`: Output cron file path
+- `--print-slots`: Show hourly slot table with computed current
+- `--print-crontab`: Print generated crontab content
+- `--dry-run`: Show cron content without writing file
+- `--show-config`: Show active configuration
+- `--install-crontab`: Automatically install generated crontab
 
-#### 9. Mostrare configurazione
+#### 9. Show configuration
 
 ```bash
 ./deyecli.py show-config
 ```
 
-#### 10. Avviare server API HTTP
+#### 10. Start HTTP API server
 
 ```bash
 ./deyecli.py api --host 0.0.0.0 --port 8000
 ```
 
-### Opzioni globali
+### Global Options
 
 ```bash
-./deyecli.py [OPZIONI_GLOBALI] <comando> [OPZIONI_COMANDO]
+./deyecli.py [GLOBAL_OPTIONS] <command> [COMMAND_OPTIONS]
 ```
 
-Opzioni globali disponibili:
-- `--base-url`: URL base API (default: https://eu1-developer.deyecloud.com)
+Available global options:
+- `--base-url`: API base URL (default: https://eu1-developer.deyecloud.com)
 - `--app-id`: Application ID
 - `--app-secret`: Application secret
 - `--username`: Username
 - `--email`: Email
-- `--mobile`: Numero mobile
+- `--mobile`: Mobile number
 - `--country-code`: Country code
-- `--password`: Password (hashing automatico)
+- `--password`: Password (automatic hashing)
 - `--company-id`: Company ID
 - `--token`: Bearer token
 - `--device-sn`: Device serial number
 - `--station-id`: Station ID
-- `--print-query`: Debug mode (mostra curl commands)
+- `--print-query`: Debug mode (prints curl commands)
 
-## Configurazione
+## Configuration
 
-### File configurazione
+### Configuration File
 
-Il programma carica la configurazione da: `~/.config/deyecli/config`
+The program loads configuration from: `~/.config/deyecli/config`
 
-Formato:
+Format:
 ```ini
 DEYE_APP_ID="your-app-id"
 DEYE_APP_SECRET="your-app-secret"
@@ -209,9 +209,9 @@ DEYE_SOLAR_CRON_MINUTE="5"
 DEYE_SOLAR_CRON_FILE="~/.config/deyecli/solar-charge.cron"
 ```
 
-### Variabili d'ambiente
+### Environment Variables
 
-Tutte le impostazioni supportano variabili d'ambiente prefixate con `DEYE_`:
+All settings support `DEYE_`-prefixed environment variables:
 
 ```bash
 export DEYE_APP_ID="xxx"
@@ -219,25 +219,25 @@ export DEYE_TOKEN="yyy"
 ./deyecli.py station-list
 ```
 
-### Precedenza configurazione
+### Configuration Precedence
 
-1. **Argomenti CLI** (massima priorità)
-2. **File di configurazione** (`~/.config/deyecli/config`)
-3. **Variabili d'ambiente** (`DEYE_*`)
-4. **Valori di default**
+1. **CLI arguments** (highest priority)
+2. **Configuration file** (`~/.config/deyecli/config`)
+3. **Environment variables** (`DEYE_*`)
+4. **Default values**
 
-## Server API HTTP
+## HTTP API Server
 
-### Avviare il server
+### Start the Server
 
 ```bash
 ./deyecli.py api --host 0.0.0.0 --port 8000
 ```
 
-### Endpoint disponibili
+### Available Endpoints
 
 #### POST /api/token
-Ottieni token di accesso
+Get access token
 ```bash
 curl -X POST http://localhost:8000/api/token \
   -H "Content-Type: application/json" \
@@ -250,42 +250,42 @@ curl -X POST http://localhost:8000/api/token \
 ```
 
 #### GET /api/station/list
-Lista stazioni
+List stations
 ```bash
 curl -X GET http://localhost:8000/api/station/list \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
 #### GET /api/station/latest
-Dati recenti stazione
+Get latest station data
 ```bash
 curl -X GET 'http://localhost:8000/api/station/latest?station_id=123' \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
 #### GET /api/device/latest
-Dati recenti dispositivo
+Get latest device data
 ```bash
 curl -X GET 'http://localhost:8000/api/device/latest?device_sn=ABC123' \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
 #### GET /api/config/battery
-Configurazione batteria
+Battery configuration
 ```bash
 curl -X GET 'http://localhost:8000/api/config/battery?device_sn=ABC123' \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
 #### GET /api/config/system
-Configurazione sistema
+System configuration
 ```bash
 curl -X GET 'http://localhost:8000/api/config/system?device_sn=ABC123' \
   -H "Authorization: Bearer YOUR_TOKEN"
 ```
 
 #### POST /api/battery/parameter/update
-Aggiorna parametro batteria
+Update battery parameter
 ```bash
 curl -X POST http://localhost:8000/api/battery/parameter/update \
   -H "Authorization: Bearer YOUR_TOKEN" \
@@ -298,7 +298,7 @@ curl -X POST http://localhost:8000/api/battery/parameter/update \
 ```
 
 #### POST /api/solar-charge-cron
-Genera cron modulazione carica solare
+Generate solar charge modulation cron
 ```bash
 curl -X POST http://localhost:8000/api/solar-charge-cron \
   -H "Authorization: Bearer YOUR_TOKEN" \
@@ -315,12 +315,12 @@ curl -X POST http://localhost:8000/api/solar-charge-cron \
   }'
 ```
 
-## Esempi pratici
+## Practical Examples
 
-### 1. Setup completo
+### 1. Full setup
 
 ```bash
-# 1. Creare file di configurazione
+# 1. Create configuration file
 mkdir -p ~/.config/deyecli
 cat > ~/.config/deyecli/config << EOF
 DEYE_BASE_URL="https://eu1-developer.deyecloud.com"
@@ -331,80 +331,3 @@ DEYE_DEVICE_SN="your-device-sn"
 DEYE_STATION_ID="123"
 DEYE_WEATHER_LAT="44.0637"
 DEYE_WEATHER_LON="12.4525"
-EOF
-
-# 2. Ottenere token
-./deyecli.py token --password yourpassword
-
-# 3. Testare
-./deyecli.py station-list
-```
-
-### 2. Generare cron giornaliero
-
-```bash
-./deyecli.py solar-charge-cron \
-  --lat 44.0637 \
-  --lon 12.4525 \
-  --low-charge-current 5 \
-  --ramp-exponent 6 \
-  --print-slots \
-  --print-crontab \
-  --install-crontab
-```
-
-### 3. Usare con Home Assistant
-
-```bash
-# Avviare server API
-./deyecli.py api --host 0.0.0.0 --port 8000 &
-
-# Configurare Home Assistant con URL:
-# http://your-ip:8000/api/station/latest?station_id=123
-```
-
-## Dipendenze
-
-### Richieste
-- Python 3.6+
-
-### Opzionali
-- `requests`: Per richieste HTTP (fallback a `curl` se non installato)
-
-Installare:
-```bash
-pip install requests
-```
-
-## Differenze rispetto allo script bash
-
-1. **Nessun `jq` richiesto**: JSON parsing nativo Python
-2. **Nessun `curl` richiesto**: Usa `requests` (o fallback a `curl`)
-3. **Server API integrato**: No bisogno di server separato
-4. **`solar-charge-cron` avanzato**: auto-detect peak, rampa configurabile (`--ramp-exponent`), `--print-crontab` e `--install-crontab`
-
-## Troubleshooting
-
-### "API request failed"
-- Verificare token: `./deyecli.py show-config | grep TOKEN`
-- Verificare parametri: `echo $DEYE_*`
-- Usare debug: `./deyecli.py --print-query <comando>`
-
-### "Weather API error"
-- Verificare coordinate: `--lat` e `--lon`
-- Controllare connessione internet
-- Provare: `curl https://api.open-meteo.com/v1/forecast?latitude=44&longitude=12&hourly=direct_radiation`
-
-### "requests library not found"
-- Installare: `pip install requests`
-- O usare curl fallback (automatico)
-
-## Licenza
-
-Stesso progetto originale `deyecli`.
-
-## Supporto
-
-Per problemi o suggerimenti, consultare la documentazione originale:
-- https://developer.deyecloud.com/api
-- Repository: deyecli
