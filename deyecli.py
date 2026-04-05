@@ -75,8 +75,8 @@ class DeyeConfig:
             'DEYE_SOLAR_MIN_RADIATION': '200',
             'DEYE_SOLAR_LOW_CHARGE_CURRENT': '5',
             'DEYE_SOLAR_DEFAULT_CHARGE_CURRENT': '',
-            'DEYE_SOLAR_PEAK_START': '12',
-            'DEYE_SOLAR_PEAK_END': '14',
+            'DEYE_SOLAR_PEAK_START': '',
+            'DEYE_SOLAR_PEAK_END': '',
             'DEYE_SOLAR_CRON_MINUTE': '5',
             'DEYE_SOLAR_CRON_FILE': os.path.expanduser('~/.config/deyecli/solar-charge.cron'),
         }
@@ -672,8 +672,8 @@ class DeyCLI:
         parser.add_argument('--min-radiation', default=self.config.get('DEYE_SOLAR_MIN_RADIATION', '200'))
         parser.add_argument('--low-charge-current', default=self.config.get('DEYE_SOLAR_LOW_CHARGE_CURRENT', '5'))
         parser.add_argument('--default-charge-current', default=self.config.get('DEYE_SOLAR_DEFAULT_CHARGE_CURRENT', ''))
-        parser.add_argument('--peak-start', default=self.config.get('DEYE_SOLAR_PEAK_START', '12'))
-        parser.add_argument('--peak-end', default=self.config.get('DEYE_SOLAR_PEAK_END', '14'))
+        parser.add_argument('--peak-start', default=self.config.get('DEYE_SOLAR_PEAK_START', ''))
+        parser.add_argument('--peak-end', default=self.config.get('DEYE_SOLAR_PEAK_END', ''))
         parser.add_argument('--minute', default=self.config.get('DEYE_SOLAR_CRON_MINUTE', '5'))
         parser.add_argument('--cron-file', default=self.config.get('DEYE_SOLAR_CRON_FILE'))
         parser.add_argument('--device-sn', default=self.config.get('DEYE_DEVICE_SN', ''))
@@ -720,27 +720,6 @@ class DeyCLI:
             return EXIT_USAGE
 
         try:
-            peak_start = int(parsed.peak_start)
-        except:
-            print(f"[ERROR] --peak-start must be 0-23, got: '{parsed.peak_start}'", file=sys.stderr)
-            return EXIT_USAGE
-        if peak_start < 0 or peak_start > 23:
-            print(f"[ERROR] --peak-start must be 0-23, got: {peak_start}", file=sys.stderr)
-            return EXIT_USAGE
-
-        try:
-            peak_end = int(parsed.peak_end)
-        except:
-            print(f"[ERROR] --peak-end must be 0-23, got: '{parsed.peak_end}'", file=sys.stderr)
-            return EXIT_USAGE
-        if peak_end < 0 or peak_end > 23:
-            print(f"[ERROR] --peak-end must be 0-23, got: {peak_end}", file=sys.stderr)
-            return EXIT_USAGE
-        if peak_end <= peak_start:
-            print(f"[ERROR] --peak-end ({peak_end}) must be greater than --peak-start ({peak_start})", file=sys.stderr)
-            return EXIT_USAGE
-
-        try:
             low_charge = int(parsed.low_charge_current)
         except:
             print(f"[ERROR] --low-charge-current must be a positive integer, got: '{parsed.low_charge_current}'", file=sys.stderr)
@@ -759,8 +738,8 @@ class DeyCLI:
             print(f"  DEYE_SOLAR_MIN_RADIATION          = {parsed.min_radiation} W/m²", file=sys.stderr)
             print(f"  DEYE_SOLAR_LOW_CHARGE_CURRENT     = {parsed.low_charge_current} A", file=sys.stderr)
             print(f"  DEYE_SOLAR_DEFAULT_CHARGE_CURRENT = {default_charge_current or 'auto-detect'}", file=sys.stderr)
-            print(f"  DEYE_SOLAR_PEAK_START             = {peak_start}:00", file=sys.stderr)
-            print(f"  DEYE_SOLAR_PEAK_END               = {peak_end}:00", file=sys.stderr)
+            print(f"  DEYE_SOLAR_PEAK_START             = {parsed.peak_start or 'auto-detect'}", file=sys.stderr)
+            print(f"  DEYE_SOLAR_PEAK_END               = {parsed.peak_end or 'auto-detect'}", file=sys.stderr)
             print(f"  DEYE_SOLAR_CRON_MINUTE            = {parsed.minute}", file=sys.stderr)
             print(f"  DEYE_SOLAR_CRON_FILE              = {parsed.cron_file}", file=sys.stderr)
             print(f"  DEYE_DEVICE_SN                    = {parsed.device_sn or 'not set'}", file=sys.stderr)
@@ -853,6 +832,45 @@ class DeyCLI:
                 'radiation':   radiation,
                 'sunny':       is_sunny,
             })
+
+        # Determine peak hours from forecast radiation data if not explicitly set
+        peak_auto = False
+        if not parsed.peak_start and not parsed.peak_end:
+            # Auto-detect: find hour with max radiation during daytime
+            daytime_slots = [s for s in slot_data if s['is_day'] == 1]
+            if daytime_slots:
+                max_rad_slot = max(daytime_slots, key=lambda s: s['radiation'])
+                peak_hour = max_rad_slot['hour']
+                peak_start = peak_hour
+                peak_end = peak_hour + 2
+                if peak_end > 23:
+                    peak_end = 23
+                peak_auto = True
+                print(f"ℹ Peak auto-detect: max radiation {max_rad_slot['radiation']:.0f} W/m² at {peak_hour}:00 → peak {peak_start}:00-{peak_end}:00", file=sys.stderr)
+            else:
+                peak_start = 12
+                peak_end = 14
+        else:
+            try:
+                peak_start = int(parsed.peak_start) if parsed.peak_start else 12
+            except:
+                print(f"[ERROR] --peak-start must be 0-23, got: '{parsed.peak_start}'", file=sys.stderr)
+                return EXIT_USAGE
+            if peak_start < 0 or peak_start > 23:
+                print(f"[ERROR] --peak-start must be 0-23, got: {peak_start}", file=sys.stderr)
+                return EXIT_USAGE
+
+            try:
+                peak_end = int(parsed.peak_end) if parsed.peak_end else 14
+            except:
+                print(f"[ERROR] --peak-end must be 0-23, got: '{parsed.peak_end}'", file=sys.stderr)
+                return EXIT_USAGE
+            if peak_end < 0 or peak_end > 23:
+                print(f"[ERROR] --peak-end must be 0-23, got: {peak_end}", file=sys.stderr)
+                return EXIT_USAGE
+            if peak_end <= peak_start:
+                print(f"[ERROR] --peak-end ({peak_end}) must be greater than --peak-start ({peak_start})", file=sys.stderr)
+                return EXIT_USAGE
 
         # Determine if this is a "solar day": at least 2 morning hours (before peak)
         # with radiation above threshold
@@ -1436,8 +1454,8 @@ Examples:
     solar_parser.add_argument('--min-radiation', type=int, help='Min radiation W/m²')
     solar_parser.add_argument('--low-charge-current', type=int, help='Low charge current A')
     solar_parser.add_argument('--default-charge-current', type=int, help='Default charge current A (auto-detect if omitted)')
-    solar_parser.add_argument('--peak-start', type=int, help='Peak charge start hour (default: 12)')
-    solar_parser.add_argument('--peak-end', type=int, help='Peak charge end hour (default: 14)')
+    solar_parser.add_argument('--peak-start', type=int, help='Peak charge start hour (auto-detect from max radiation if omitted)')
+    solar_parser.add_argument('--peak-end', type=int, help='Peak charge end hour (auto-detect if omitted)')
     solar_parser.add_argument('--minute', type=int, help='Cron minute')
     solar_parser.add_argument('--cron-file', help='Cron file path')
     solar_parser.add_argument('--print-slots', action='store_true')
