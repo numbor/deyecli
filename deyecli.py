@@ -1074,15 +1074,11 @@ class DeyCLI:
         preamble_lines = []
 
         # 1. Daily self-regen: calls itself every morning to update the crontab
-        regen_args = (
-            f"--lat {latitude} --lon {longitude} "
-            f"--cron-file '{parsed.cron_file}' --install-crontab"
-        )
         preamble_lines.append(
             f"# Daily self-regen: regenerate crontab with today's solar forecast\n"
             f"{cron_min} {regen_hour} * * * "
             f"DEYE_CONFIG='{config_path}' '{script_path}' "
-            f"solar-charge-cron {regen_args} "
+            f"solar-charge-cron --cron-file '{parsed.cron_file}' --install-crontab "
             f">>/tmp/deyecli.log 2>&1"
         )
 
