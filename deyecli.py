@@ -681,6 +681,7 @@ class DeyCLI:
         parser.add_argument('--peak-start', default=self.config.get('DEYE_SOLAR_PEAK_START', ''))
         parser.add_argument('--peak-end', default=self.config.get('DEYE_SOLAR_PEAK_END', ''))
         parser.add_argument('--ramp-exponent', default=self.config.get('DEYE_SOLAR_RAMP_EXPONENT', '4'))
+        parser.add_argument('--regen-hour', default=self.config.get('DEYE_SOLAR_REGEN_HOUR', '5'))
         parser.add_argument('--minute', default=self.config.get('DEYE_SOLAR_CRON_MINUTE', '5'))
         parser.add_argument('--cron-file', default=self.config.get('DEYE_SOLAR_CRON_FILE'))
         parser.add_argument('--device-sn', default=self.config.get('DEYE_DEVICE_SN', ''))
@@ -743,6 +744,14 @@ class DeyCLI:
         if ramp_exp <= 0:
             _log(f"[ERROR] --ramp-exponent must be > 0, got: {ramp_exp}")
             return EXIT_USAGE
+
+        try:
+            regen_hour = int(parsed.regen_hour)
+        except:
+            _log(f"[ERROR] --regen-hour must be 0-23, got: '{parsed.regen_hour}'")
+            return EXIT_USAGE
+        if regen_hour < 0 or regen_hour > 23:
+            _log(f"[ERROR] --regen-hour must be 0-23, got: {regen_hour}")
             return EXIT_USAGE
 
         if parsed.show_config:
@@ -758,6 +767,7 @@ class DeyCLI:
             _log(f"  DEYE_SOLAR_PEAK_START             = {parsed.peak_start or 'auto-detect'}")
             _log(f"  DEYE_SOLAR_PEAK_END               = {parsed.peak_end or 'auto-detect'}")
             _log(f"  DEYE_SOLAR_RAMP_EXPONENT          = {parsed.ramp_exponent}")
+            _log(f"  DEYE_SOLAR_REGEN_HOUR             = {parsed.regen_hour}")
             _log(f"  DEYE_SOLAR_CRON_MINUTE            = {parsed.minute}")
             _log(f"  DEYE_SOLAR_CRON_FILE              = {parsed.cron_file}")
             _log(f"  DEYE_DEVICE_SN                    = {parsed.device_sn or 'not set'}")
@@ -1060,6 +1070,38 @@ class DeyCLI:
                     f"--value {default_charge} >>/tmp/deyecli.log 2>&1"
                 )
 
+        # Build preamble entries: self-regen + set-to-low
+        preamble_lines = []
+
+        # 1. Daily self-regen: calls itself every morning to update the crontab
+        preamble_lines.append(
+            f"# Daily self-regen: regenerate crontab with today's solar forecast\n"
+            f"{cron_min} {regen_hour} * * * "
+            f"DEYE_CONFIG='{config_path}' '{script_path}' "
+            f"solar-charge-cron --cron-file '{parsed.cron_file}' --install-crontab "
+            f">>/tmp/deyecli.log 2>&1"
+        )
+
+        # 2. Set charge to minimum at start of solar day (right after regen, date-guarded)
+        if is_solar_day and cron_lines:
+            _first_date = slot_data[0]['time'].split('T')[0]
+            for _s in slot_data:
+                if _s['charge_current'] != default_charge:
+                    _first_date = _s['time'].split('T')[0]
+                    break
+            _year, _month, _day = _first_date.split('-')
+            _month_int = int(_month)
+            _day_int   = int(_day)
+            set_low_min = (cron_min + 1) % 60
+            preamble_lines.append(
+                f"# Set MAX_CHARGE_CURRENT to minimum {low_charge} A at dawn of solar day\n"
+                f"{set_low_min} {regen_hour} {_day_int} {_month_int} * "
+                f'[ "$(date +\\%Y-\\%m-\\%d)" = "{_first_date}" ] && '
+                f"DEYE_CONFIG='{config_path}' '{script_path}' "
+                f"battery-parameter-update --param-type MAX_CHARGE_CURRENT "
+                f"--value {low_charge} >>/tmp/deyecli.log 2>&1"
+            )
+
         # Build cron file content
         generated_on = datetime.utcnow().isoformat() + 'Z'
         cron_content = (
@@ -1074,6 +1116,9 @@ class DeyCLI:
             f"SHELL=/bin/bash\n"
             f"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n"
         )
+
+        for line in preamble_lines:
+            cron_content += line + "\n"
 
         if cron_lines:
             for line in cron_lines:
