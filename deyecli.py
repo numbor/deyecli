@@ -637,7 +637,7 @@ class DeyCLI:
     def cmd_solar_charge_cron(self, args):
         """Generate solar charge cron file with gradual morning charge modulation.
 
-        Strategy: on sunny days, keep MAX_CHARGE_CURRENT low in the morning
+        Strategy: when direct radiation is above threshold, keep MAX_CHARGE_CURRENT low in the morning
         (gradually ramping up) so the battery doesn't fill before lunch.
         At peak hours (default 12-14) set full charge. After peak, restore default.
         On cloudy days, keep default all day (no modulation).
@@ -847,8 +847,8 @@ class DeyCLI:
             time_part = t.split('T')[1] if 'T' in t else '00:00'
             hour = int(time_part.split(':')[0])
 
-            # Sunny: daytime + direct radiation above threshold + clear weathercode
-            is_sunny = (is_day == 1 and radiation > min_rad and code < 51 and code not in (45, 48))
+            # A slot is considered solar-active only by direct radiation threshold.
+            is_solar_active = (radiation >= min_rad)
 
             slot_data.append({
                 'time':        t,
@@ -858,16 +858,15 @@ class DeyCLI:
                 'weathercode': code,
                 'description': WEATHER_DESCRIPTIONS.get(code, "Sconosciuto"),
                 'radiation':   radiation,
-                'sunny':       is_sunny,
+                'solar_active': is_solar_active,
             })
 
         # Determine peak hours from forecast radiation data if not explicitly set
         peak_auto = False
         if not parsed.peak_start and not parsed.peak_end:
-            # Auto-detect: find hour with max radiation during daytime
-            daytime_slots = [s for s in slot_data if s['is_day'] == 1]
-            if daytime_slots:
-                max_rad_slot = max(daytime_slots, key=lambda s: s['radiation'])
+            # Auto-detect: find hour with max direct radiation in forecast window
+            if slot_data:
+                max_rad_slot = max(slot_data, key=lambda s: s['radiation'])
                 peak_hour = max_rad_slot['hour']
                 peak_start = peak_hour
                 peak_end = peak_hour + 2
@@ -900,13 +899,9 @@ class DeyCLI:
                 _log(f"[ERROR] --peak-end ({peak_end}) must be greater than --peak-start ({peak_start})")
                 return EXIT_USAGE
 
-        # Determine if this is a "solar day": at least 2 morning hours (before peak)
-        # with radiation above threshold
-        morning_sunny_count = sum(
-            1 for s in slot_data
-            if s['sunny'] and s['hour'] < peak_start
-        )
-        is_solar_day = morning_sunny_count >= 2
+        # Determine solar-active slots using only direct radiation threshold.
+        solar_active_slots = [s for s in slot_data if s['radiation'] >= min_rad]
+        is_solar_day = len(solar_active_slots) > 0
 
         # Auto-detect default charge current from battery config
         if not default_charge_current:
@@ -946,18 +941,19 @@ class DeyCLI:
         # Compute per-hour charge current for solar days
         # On cloudy days, all hours keep default (no cron entries needed)
         if is_solar_day:
-            # Find first sunny hour as modulation start
+            # Find first solar-active hour as modulation start
             modulation_start = peak_start
-            for s in slot_data:
-                if s.get('sunny') and s['hour'] < peak_start:
+            for s in solar_active_slots:
+                if s['hour'] < peak_start:
                     modulation_start = s['hour']
                     break
+            # If there is no active hour before peak, start from first active hour.
+            if modulation_start == peak_start and solar_active_slots:
+                modulation_start = solar_active_slots[0]['hour']
 
             for s in slot_data:
                 hour = s['hour']
-                if not s['is_day']:
-                    s['charge_current'] = default_charge
-                elif hour >= modulation_start and hour < peak_start:
+                if hour >= modulation_start and hour < peak_start:
                     # Morning before peak: cubic ramp (stays low, rises late)
                     span = peak_start - modulation_start
                     if span > 0:
@@ -972,7 +968,7 @@ class DeyCLI:
                     # Peak hours: full charge
                     s['charge_current'] = default_charge
                 else:
-                    # After peak or before first sunny hour: default
+                    # After peak or before first solar-active hour: default
                     s['charge_current'] = default_charge
         else:
             # Cloudy day: no modulation
@@ -983,7 +979,7 @@ class DeyCLI:
         if parsed.print_slots:
             headers = [
                 'local_time', 'is_day', 'cloudcover_pct',
-                'weathercode', 'description', 'direct_rad_w/m2', 'sunny_slot',
+                'weathercode', 'description', 'direct_rad_w/m2', 'rad_ge_threshold',
                 'charge_A'
             ]
             rows = []
@@ -996,7 +992,7 @@ class DeyCLI:
                     str(s['weathercode']),
                     s['description'],
                     str(s['radiation']),
-                    'YES' if s['sunny'] else 'NO',
+                    'YES' if s['solar_active'] else 'NO',
                     str(s['charge_current']),
                 ])
 
@@ -1011,7 +1007,7 @@ class DeyCLI:
                 print(fmt.format(*row))
 
         if not is_solar_day:
-            _log(f"ℹ Cloudy day: only {morning_sunny_count} sunny morning hours (minimum 2). No modulation.")
+            _log(f"ℹ Cloudy day: no hours with direct_rad_w/m2 >= {min_rad:.0f}. No modulation.")
 
         # Script path for cron commands (absolute path of the running script)
         script_path = os.path.abspath(__file__)
@@ -1110,7 +1106,7 @@ class DeyCLI:
             f"# Strategy: gradual morning ramp {low_charge}A → {default_charge}A, peak {peak_start}:00-{peak_end}:00\n"
         )
         if not is_solar_day:
-            cron_content += f"# Cloudy day: {morning_sunny_count} sunny morning hours (min 2). No modulation.\n"
+            cron_content += f"# Cloudy day: no hours with direct_rad_w/m2 >= {min_rad:.0f}. No modulation.\n"
         cron_content += (
             f"# Install: crontab {parsed.cron_file}\n"
             f"SHELL=/bin/bash\n"
@@ -1219,13 +1215,13 @@ WEATHER/SOLAR PARAMETERS:
     Forecast window in hours.
 
   DEYE_SOLAR_MIN_RADIATION (default: 200)
-    Minimum direct radiation in W/m² for sunny slot.
+        Minimum direct radiation in W/m² to consider an hour solar-active.
 
   DEYE_SOLAR_LOW_CHARGE_CURRENT (default: 5)
-    Target charge current when sunny (Amperes).
+        Target charge current for solar-active hours (Amperes).
 
   DEYE_SOLAR_DEFAULT_CHARGE_CURRENT
-    Charge current to restore after sunny slots (auto-detected by default).
+        Charge current to restore outside solar-active hours (auto-detected by default).
 
   DEYE_SOLAR_CRON_MINUTE (default: 5)
     Cron minute for execution.
@@ -1459,7 +1455,7 @@ Solar Charge Cron - How it works:
     exported to the grid.
 
     The morning ramp follows an exponential curve: charge = low + (max - low) * t^exp
-    where t goes from 0 (first sunny hour) to 1 (peak start).
+    where t goes from 0 (first hour above direct radiation threshold) to 1 (peak start).
 
     --ramp-exponent controls the shape of the curve:
         1   = linear (steady increase)
@@ -1540,7 +1536,7 @@ Examples:
     battery charges more slowly and excess energy can be exported to the grid.
 
     The morning ramp follows an exponential curve: charge = low + (max - low) * t^exp
-    where t goes from 0 (first sunny hour) to 1 (peak start).
+    where t goes from 0 (first hour above direct radiation threshold) to 1 (peak start).
 
     --ramp-exponent controls the shape of the curve:
         1   = linear (steady increase)
